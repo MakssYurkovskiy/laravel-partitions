@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/MakssYurkovskiy/laravel-partitions/actions/workflows/tests.yml/badge.svg)](https://github.com/MakssYurkovskiy/laravel-partitions/actions/workflows/tests.yml)
 [![Latest Version](https://img.shields.io/packagist/v/yurkovskiy/laravel-partitions)](https://packagist.org/packages/yurkovskiy/laravel-partitions)
-[![PHP Version](https://img.shields.io/packagist/php-v/yurkovskiy/laravel-partitions)](https://packagist.org/packages/yurkovskiy/laravel-partitions)
+[![PHP Version](https://img.shields.io/packagist/dependency-v/yurkovskiy/laravel-partitions/php)](https://packagist.org/packages/yurkovskiy/laravel-partitions)
 [![License](https://img.shields.io/packagist/l/yurkovskiy/laravel-partitions)](LICENSE)
 
 Flexible MySQL partition management for Laravel.
