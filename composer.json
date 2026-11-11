@@ -1,0 +1,71 @@
+{
+    "name": "yurkovskiy/laravel-partitions",
+    "description": "Flexible MySQL partition management for Laravel: RANGE partitions by day/week/month/year, retention pruning, artisan tooling and scheduled maintenance.",
+    "keywords": ["laravel", "mysql", "partitions", "partitioning", "retention"],
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Max Yurkovskiy",
+            "homepage": "https://github.com/MakssYurkovskiy",
+            "role": "Developer"
+        }
+    ],
+    "homepage": "https://github.com/MakssYurkovskiy/laravel-partitions",
+    "support": {
+        "issues": "https://github.com/MakssYurkovskiy/laravel-partitions/issues",
+        "source": "https://github.com/MakssYurkovskiy/laravel-partitions"
+    },
+    "require": {
+        "php": "^8.2",
+        "illuminate/console": "^12.0|^13.0",
+        "illuminate/container": "^12.0|^13.0",
+        "illuminate/database": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0",
+        "nesbot/carbon": "^3.8",
+        "psr/log": "^1.0|^2.0|^3.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.1",
+        "laravel/pint": "^1.24",
+        "orchestra/testbench": "^10.0|^11.0",
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Yurkovskiy\\Partitions\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Yurkovskiy\\Partitions\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Yurkovskiy\\Partitions\\PartitionServiceProvider"
+            ],
+            "aliases": {
+                "Partition": "Yurkovskiy\\Partitions\\Facades\\Partition"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "scripts": {
+        "analyse": "phpstan analyse --memory-limit=512M",
+        "lint": "pint --test",
+        "fix": "pint",
+        "test": "phpunit"
+    },
+    "scripts-descriptions": {
+        "analyse": "Run PHPStan over src",
+        "lint": "Check the code style without changing files",
+        "fix": "Apply the code style",
+        "test": "Run the test suite"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

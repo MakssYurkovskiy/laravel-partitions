@@ -1,0 +1,119 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  COMPOSER_ROOT_VERSION: 1.0.x-dev
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }} · Laravel ${{ matrix.laravel }} · ${{ matrix.dependencies }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { php: '8.2', laravel: 12, testbench: '^10.0', dependencies: highest }
+          - { php: '8.3', laravel: 12, testbench: '^10.0', dependencies: highest }
+          - { php: '8.4', laravel: 12, testbench: '^10.0', dependencies: highest }
+          - { php: '8.5', laravel: 12, testbench: '^10.0', dependencies: highest }
+          - { php: '8.3', laravel: 13, testbench: '^11.0', dependencies: highest }
+          - { php: '8.4', laravel: 13, testbench: '^11.0', dependencies: highest }
+          - { php: '8.5', laravel: 13, testbench: '^11.0', dependencies: highest }
+          - { php: '8.2', laravel: 12, testbench: '^10.0', dependencies: lowest }
+          - { php: '8.3', laravel: 13, testbench: '^11.0', dependencies: lowest }
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Pin the framework to Laravel ${{ matrix.laravel }}
+        run: |
+          composer require --no-update --no-interaction \
+            "illuminate/console:^${{ matrix.laravel }}.0" \
+            "illuminate/container:^${{ matrix.laravel }}.0" \
+            "illuminate/database:^${{ matrix.laravel }}.0" \
+            "illuminate/support:^${{ matrix.laravel }}.0"
+          composer require --dev --no-update --no-interaction \
+            "orchestra/testbench:${{ matrix.testbench }}"
+
+      - name: Install dependencies
+        run: |
+          composer update --prefer-dist --no-interaction --no-progress \
+            ${{ matrix.dependencies == 'lowest' && '--prefer-lowest' || '' }}
+
+      - name: Report the resolved versions
+        run: composer show --direct
+
+      - name: Run the test suite
+        run: vendor/bin/phpunit
+
+  validate:
+    name: composer validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+  code-style:
+    name: pint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Check the code style
+        run: vendor/bin/pint --test
+
+  static-analysis:
+    name: phpstan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run the static analysis
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=512M
