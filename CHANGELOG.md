@@ -8,8 +8,8 @@ Documentation only; the code is the same as in 0.1.0.
 
 ### Changed
 
-- The README no longer has a section on `nuxgame/laravel-retention-period`, and the configuration
-  example no longer points at that package.
+- The README no longer has a section on a third-party package, and the configuration example no
+  longer points at it.
 
 ### Fixed
 
