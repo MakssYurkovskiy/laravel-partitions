@@ -4,20 +4,6 @@ All notable changes to this package are documented here.
 
 ## [0.1.1] - 2026-11-11
 
-Documentation only; the code is the same as in 0.1.0.
-
-### Changed
-
-- The README no longer has a section on a third-party package, and the configuration example no
-  longer points at it.
-
-### Fixed
-
-- The PHP version badge in the README renders again: it used a shields.io endpoint that no longer
-  exists.
-
-## [0.1.0] - 2026-11-11
-
 The first release. The package is extracted from the `app/Services/Partition` namespace of an
 application and rebuilt as a standalone partition layer for MySQL and MariaDB `RANGE` partitioning by
 date.
