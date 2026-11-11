@@ -400,7 +400,7 @@ statement is built, instead of being read as `0`.
     'user_transactions_v2' => [
         'strategy' => 'monthly',
         'column' => 'created_at',
-        'expression' => 'unix_timestamp',  // as created by laravel-retention-period
+        'expression' => 'unix_timestamp',
         'max_partition' => 'p_future',
         'future' => 6,
         'max_gaps' => 3,
@@ -552,26 +552,6 @@ Need the raw clause instead (for a hand written `CREATE TABLE`)?
 ```php
 $clause = Partition::table('transactions')->daily('created_at')->future(30)->partitionByClause();
 ```
-
-## Working with `nuxgame/laravel-retention-period`
-
-[`nuxgame/laravel-retention-period`](https://github.com/NuxGame/laravel_retention_period) partitions
-its tables as monthly `RANGE (UNIX_TIMESTAMP(created_at))` with a `p_future` catch-all. Tables laid
-out that way can be managed with this package as they are — nothing has to be converted:
-
-```php
-Partition::table('transactions')
-    ->monthly('created_at')
-    ->expression('unix_timestamp')
-    ->withMaxPartition('p_future')
-    ->future(14)
-    ->maintain();
-```
-
-The two packages solve different problems: `laravel-retention-period` is a data lifecycle suite
-(S3 archiving, hot migration, Athena export) with partitioning baked in, while this one is a small
-focused partition layer for any table and any period. Pick one owner per table — running both
-maintenance jobs on the same table is fine, but the retention package expects its own naming.
 
 ## Events
 
