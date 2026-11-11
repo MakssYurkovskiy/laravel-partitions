@@ -43,6 +43,7 @@ Partition::table('transactions')
 - [Timezones](#timezones)
   - [Dates you pass in](#dates-you-pass-in)
 - [Artisan commands](#artisan-commands)
+  - [A table left longer than its retention](#a-table-left-longer-than-its-retention)
   - [Filling a long gap](#filling-a-long-gap)
 - [Configuration and scheduled maintenance](#configuration-and-scheduled-maintenance)
 - [Migrations](#migrations)
@@ -98,6 +99,7 @@ $builder->missing();                    // Collection<PendingPartition> for the 
 $builder->plan();                       // PartitionPlan: pending (what sync() adds) and deferred (left for later)
 $builder->gap();                        // PartitionGap|null: periods an explicit from() leaves uncovered
 $builder->outdated();                   // Collection<PartitionInfo> prune() would drop
+$builder->outdatedAfter($plan);         // Collection<PartitionInfo> maintain($plan) would drop
 $builder->inRange('2025-06-01', '2025-06-10');  // Collection<PartitionInfo> dropBetween() would drop
 $builder->has(now()->addDay());         // is tomorrow covered?
 $builder->partitionNameFor('2025-06-13');  // "p20250613"
@@ -158,10 +160,10 @@ and the `information_schema` lookups carry the prefix.
 | --- | --- |
 | `from($date)` / `to($date)` / `between($from, $to)` | Explicit range, inclusive on both ends. Without `from()` the range starts right after the last existing partition, or at the current period when the table has none. A `from()` whose period lies past the end of the range — past `to()`, or past the look-ahead when `to()` is not set — throws an `InvalidRangeException` instead of describing a range with nothing in it. A `from()` past the period right after the last partition is taken as given, and the periods it skips are reported: `gap()` describes them, `sync()` writes a warning to the log. A date object counts by its own calendar date, see [Dates you pass in](#dates-you-pass-in). |
 | `future(int $periods)` | Periods kept created ahead of today when `to()` is not set (default 7). Counted from today, not from the last partition: `future(10)` on a table that already reaches a week ahead adds three periods, and a second run adds none. |
-| `retain(?int $periods)` | Complete periods kept by `prune()` **before** the current one: partitions whose period starts before `now - N periods` are dropped, so a daily table under `retain(90)` ends up with 91 of them — the last 90 days and today. `retain(0)` keeps the current period only, `null` disables pruning. |
+| `retain(?int $periods)` | Complete periods kept by `prune()` **before** the current one: partitions whose period starts before `now - N periods` are dropped, so a daily table under `retain(90)` ends up with 91 of them — the last 90 days and today. `retain(0)` keeps the current period only, `null` disables pruning. The last partition with a boundary is never pruned, however old it is, see [a table left longer than its retention](#a-table-left-longer-than-its-retention). |
 | `chunk(?int $size)` | Partitions per `DROP PARTITION` and `TRUNCATE PARTITION` statement (default 1, which keeps metadata locks short). `null` or `0` puts them all in one statement. Adding is split by `syncChunk()`. |
 | `syncChunk(?int $size)` | Partitions per statement that adds them (default `null`, all in one statement; `0` means the same). A size of N splits the additions into statements of N partitions each. Every `REORGANIZE` rewrites what is still in `pMax`, so splitting trades extra work for recoverability, see [filling a long gap](#filling-a-long-gap). |
-| `fillGaps(bool $fill = true)` | Start from the last covered period instead of today, so periods a table skipped while unattended are created too (default on). An explicit `from()` is not moved back, but while gap filling is on the periods it skips are warned about; with `fillGaps(false)` the gap is left on purpose and nothing is said. |
+| `fillGaps(bool $fill = true)` | Start from the last covered period instead of today, so periods a table skipped while unattended are created too (default on). With `retain()` set, the skipped periods retention has already expired are not created: filling starts at the retention cutoff. An explicit `from()` is not moved back, but while gap filling is on the periods it skips are warned about; with `fillGaps(false)` the gap is left on purpose and nothing is said. |
 | `maxGaps(?int $gaps)` | How many skipped periods one run fills, oldest first (default 12). `null` or `0` lifts the limit; `pending()` is what the next `sync()` adds, `deferred()` what is left for a later run; `plan()` returns both from one pass over the table. |
 | `dryRun(bool $dryRun = true)` | Build the SQL, execute nothing. The table is still read, so `create()` and `removePartitioning()` throw in a dry run wherever they would throw for real. |
 
@@ -174,10 +176,10 @@ the ones it would have run.
 | --- | --- |
 | `create()` | Partition a table that is not partitioned yet. Throws when it already is. |
 | `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, up to `maxGaps()`. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. `syncStatements()` takes a plan the same way. |
-| `prune()` | Drop what falls outside `retain()`. |
+| `prune()` | Drop what falls outside `retain()`, except the last partition with a boundary. |
 | `dropBefore($date)` | Drop everything older than the given date — its own calendar date for a date object, see [Dates you pass in](#dates-you-pass-in). |
 | `dropBetween($from, $to)` | Drop the partitions covering the range, inclusive on both ends. The bounds are normalised, so passing them the other way round selects the same partitions. |
-| `maintain(?PartitionPlan $plan = null)` | `['added' => ..., 'dropped' => ...]` — `sync($plan)` plus `prune()`. |
+| `maintain(?PartitionPlan $plan = null)` | `['added' => ..., 'dropped' => ...]` — `sync($plan)` plus `prune()`. What is dropped is decided before anything is added, so a dry run lists the drops of a real run. |
 | `drop($partitions)` | Drop exactly these partitions — say, the list `outdated()` or `inRange()` returned and somebody looked at. |
 | `truncate($partitions)` | Empty partitions without dropping them. |
 | `removePartitioning()` | `ALTER TABLE ... REMOVE PARTITIONING`, keeping the data. Throws when the table is not partitioned. |
@@ -332,6 +334,20 @@ partition.
 The same sentence goes to the application log as a warning once the statements have run — from
 `sync()` itself, so a call from code is recorded as well as the command (see [Log](#log)). With
 `fill_gaps` off the gap is left on purpose: nothing is printed and nothing is logged.
+
+### A table left longer than its retention
+
+When a table sat unattended for longer than `retain()` covers, the oldest periods it skipped are
+already expired: creating them would only hand them to `prune()` in the same run. With `retain()` set
+they are not planned at all — `missing()`, `plan()`, `sync()` and `maintain()` start at the retention
+cutoff, and the first partition created there takes the rows of the periods before it. An explicit
+`from()` is taken as given, as always.
+
+The next run starts right after the last partition that has a boundary, so that partition is the one
+`prune()`, `partitions:drop --retain` and `outdated()` never select: without it a table reduced to
+`pMax` would be continued from today, and every row since the gap would land in today's partition.
+It is dropped as soon as a newer partition exists — `maintain()` adds first, so it goes in the same
+run. `dropBefore()`, `dropBetween()` and `drop()` do exactly what they are told.
 
 ### Filling a long gap
 

@@ -48,11 +48,11 @@ class FakePartitionRepository implements PartitionRepository
      * @param  string  $method  PARTITION_METHOD as information_schema reports it
      * @param  string|null  $expression  PARTITION_EXPRESSION as information_schema reports it
      */
-    public static function withPartitions(array $partitions, string $method = 'RANGE', ?string $expression = null): self
+    public static function withPartitions(array $partitions, string $method = 'RANGE', ?string $expression = null): static
     {
         $ordinal = 0;
 
-        return new self(collect($partitions)
+        return new static(collect($partitions)
             ->map(fn (?string $description, string $name) => new PartitionInfo(
                 name: $name,
                 description: $description,

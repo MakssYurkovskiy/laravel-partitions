@@ -550,14 +550,32 @@ class PartitionBuilder
         $this->assertMatchesExisting($existing);
         $this->assertPeriodMatchesExisting($existing);
 
-        return $existing
-            ->reject(fn (PartitionInfo $partition) => $partition->isMax())
-            ->filter(function (PartitionInfo $partition) use ($cutoff) {
-                $start = $this->getStrategy()->parse($partition->name);
+        $anchor = $before === null ? $this->lastBounded($existing)?->name : null;
 
-                return $start !== null && $start->lessThan($cutoff);
-            })
+        return $this->startingBefore($existing, $cutoff)
+            ->reject(fn (PartitionInfo $partition) => $partition->name === $anchor)
             ->values();
+    }
+
+    /**
+     * @return Collection<int, PartitionInfo>
+     *
+     * @throws PartitionException
+     */
+    public function outdatedAfter(PartitionPlan $plan): Collection
+    {
+        $cutoff = $this->retentionCutoff();
+
+        if ($cutoff === null || $plan->pending->isEmpty()) {
+            return $this->outdated();
+        }
+
+        $existing = $this->existing();
+
+        $this->assertMatchesExisting($existing);
+        $this->assertPeriodMatchesExisting($existing);
+
+        return $this->startingBefore($existing, $cutoff);
     }
 
     public function partitionByClause(): string
@@ -713,9 +731,12 @@ class PartitionBuilder
      */
     public function maintain(?PartitionPlan $plan = null): array
     {
+        $plan ??= $this->plan();
+        $outdated = $this->outdatedAfter($plan);
+
         return [
             'added' => $this->sync($plan),
-            'dropped' => $this->retain === null ? collect() : $this->prune(),
+            'dropped' => $this->drop($outdated),
         ];
     }
 
@@ -1031,6 +1052,22 @@ class PartitionBuilder
         return $last === null ? null : $this->boundaryOf($last);
     }
 
+    /**
+     * @param  Collection<int, PartitionInfo>  $existing
+     * @return Collection<int, PartitionInfo>
+     */
+    protected function startingBefore(Collection $existing, CarbonImmutable $cutoff): Collection
+    {
+        return $existing
+            ->reject(fn (PartitionInfo $partition) => $partition->isMax())
+            ->filter(function (PartitionInfo $partition) use ($cutoff) {
+                $start = $this->getStrategy()->parse($partition->name);
+
+                return $start !== null && $start->lessThan($cutoff);
+            })
+            ->values();
+    }
+
     protected function retentionCutoff(): ?CarbonImmutable
     {
         return $this->retain === null
@@ -1044,9 +1081,16 @@ class PartitionBuilder
             return $this->from;
         }
 
-        return $floor !== null && $this->fillGaps
-            ? $this->dateOf($floor)
-            : $this->now();
+        if ($floor === null || ! $this->fillGaps) {
+            return $this->now();
+        }
+
+        $covered = $this->dateOf($floor);
+        $cutoff = $this->retentionCutoff();
+
+        return $cutoff !== null && $cutoff->format('Y-m-d') > $covered->format('Y-m-d')
+            ? $cutoff
+            : $covered;
     }
 
     protected function dateOf(DateTimeInterface $boundary): CarbonImmutable
