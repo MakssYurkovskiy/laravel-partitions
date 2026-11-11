@@ -73,7 +73,7 @@ class RunPartitionsCommand extends PartitionCommand
         $plan = $builder->plan();
         $added = $plan->pending->count();
         $deferred = $plan->deferred->count();
-        $outdated = $builder->outdated()->count();
+        $outdated = $builder->outdatedAfter($plan)->count();
         $result = $builder->maintain($plan);
 
         return [
