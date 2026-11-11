@@ -413,6 +413,14 @@ statement is built, instead of being read as `0`.
 `\Yurkovskiy\Partitions\Schema\PartitionPeriod::Monthly` — because the published config file imports
 nothing.
 
+An empty value counts as a key that is not there, for every setting, globally and per table. With
+`'retain' => env('TRANSACTIONS_RETAIN', 90)` and a bare `TRANSACTIONS_RETAIN=` in `.env`, `env()`
+returns `''` rather than `90`, and the table is not pruned at all, as if `retain` were not given —
+never `retain(0)`. An empty table setting keeps the global one. `null` reads the same way for the
+settings it has no meaning for: `table`, `strategy`, `column`, `prefix`, `expression`,
+`max_partition`, `future`, `fill_gaps` and `verify_timezone`. For `retain`, `chunk`, `sync_chunk` and
+`max_gaps` it keeps the meaning listed in the config file: no pruning, one statement, no limit.
+
 Configured tables are addressable by key:
 
 ```php

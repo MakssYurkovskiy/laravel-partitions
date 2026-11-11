@@ -16,6 +16,8 @@ use Yurkovskiy\Partitions\Schema\PartitionPeriod;
 
 class PartitionManager
 {
+    protected const NULLABLE = ['connection', 'tablespace', 'timezone', 'retain', 'chunk', 'sync_chunk', 'max_gaps'];
+
     /**
      * @param  array<string, mixed>  $config
      */
@@ -28,11 +30,13 @@ class PartitionManager
 
     public function newBuilder(): PartitionBuilder
     {
-        $builder = $this->apply(new PartitionBuilder($this->repository, $this->events, $this->logger), $this->config)
-            ->defaultConnection($this->nullableString($this->config['connection'] ?? null));
+        $config = $this->given($this->config);
 
-        if (array_key_exists('future', $this->config)) {
-            $builder->future((int) $this->config['future']);
+        $builder = $this->apply(new PartitionBuilder($this->repository, $this->events, $this->logger), $config)
+            ->defaultConnection($this->nullableString($config['connection'] ?? null));
+
+        if (array_key_exists('future', $config)) {
+            $builder->future((int) $config['future']);
         }
 
         return $builder;
@@ -128,6 +132,8 @@ class PartitionManager
      */
     protected function fromArray(string $key, array $settings): PartitionBuilder
     {
+        $settings = $this->given($settings);
+
         $builder = $this->apply($this->newBuilder(), $settings);
 
         if (array_key_exists('connection', $settings)) {
@@ -142,9 +148,9 @@ class PartitionManager
 
         $builder->table($settings['table'] ?? $key)
             ->strategy($strategy, $settings['column'] ?? 'created_at')
-            ->retain(isset($settings['retain']) ? (int) $settings['retain'] : null);
+            ->retain($this->nullableInt($settings['retain'] ?? null));
 
-        if (isset($settings['future'])) {
+        if (array_key_exists('future', $settings)) {
             $builder->future((int) $settings['future']);
         }
 
@@ -198,6 +204,20 @@ class PartitionManager
         }
 
         return $builder;
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $settings
+     * @return array<array-key, mixed>
+     */
+    protected function given(array $settings): array
+    {
+        return array_filter(
+            $settings,
+            fn (mixed $value, int|string $key): bool => $value !== ''
+                && ($value !== null || in_array($key, self::NULLABLE, true)),
+            ARRAY_FILTER_USE_BOTH
+        );
     }
 
     protected function nullableString(mixed $value): ?string
