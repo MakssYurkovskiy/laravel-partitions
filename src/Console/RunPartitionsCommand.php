@@ -105,7 +105,8 @@ class RunPartitionsCommand extends PartitionCommand
 
     protected function configuredTable(string $key): string
     {
-        $table = data_get($this->manager->config(), ['tables', $key, 'table']) ?? $key;
+        $table = data_get($this->manager->config(), ['tables', $key, 'table']);
+        $table = $table === null || $table === '' ? $key : $table;
 
         return is_string($table) && $table !== '' ? $table : '—';
     }

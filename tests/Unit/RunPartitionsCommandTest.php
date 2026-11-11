@@ -165,7 +165,7 @@ REORGANIZE PARTITION `pMax` INTO (
         $tester = $this->runCommand($this->command($repository, ['tables' => [
             'logs' => ['table' => 'app_logs', 'timezone' => 'Mars/Base'],
             'audit' => ['strategy' => 'hourly'],
-            'unnamed' => ['table' => ''],
+            'unnamed' => ['table' => '', 'strategy' => 'hourly'],
             'transactions' => ['future' => 1],
         ]]));
 
@@ -181,7 +181,7 @@ REORGANIZE PARTITION `pMax` INTO (
             $output
         );
         self::assertMatchesRegularExpression(
-            '/unnamed\s+\|\s+—\s+\|\s+—\s+\|\s+—\s+\|\s+No table set for the partition builder/',
+            '/unnamed\s+\|\s+unnamed\s+\|\s+—\s+\|\s+—\s+\|\s+Unknown partition strategy \[hourly\]/',
             $output
         );
         self::assertMatchesRegularExpression('/transactions\s+\|\s+transactions\s+\|\s+1\s+\|\s+0\s+\|\s+1/', $output);

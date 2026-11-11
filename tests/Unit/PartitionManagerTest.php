@@ -189,6 +189,132 @@ class PartitionManagerTest extends TestCase
         self::assertSame('Europe/Kyiv', $builder->getTimezone()->getName());
     }
 
+    public function test_an_empty_retain_drops_nothing(): void
+    {
+        $repository = $this->dailyRepository();
+
+        $this->manager(['tables' => ['transactions' => ['retain' => '']]], $repository)
+            ->for('transactions')
+            ->maintain();
+
+        self::assertNotEmpty($repository->executed);
+        self::assertSame([], array_filter($repository->executed, fn (string $sql): bool => str_contains($sql, 'DROP')));
+    }
+
+    /**
+     * @return iterable<string, array{string, mixed}>
+     */
+    public static function unsetGlobalValues(): iterable
+    {
+        $keys = ['prefix', 'max_partition', 'tablespace', 'expression', 'timezone', 'verify_timezone', 'future',
+            'chunk', 'sync_chunk', 'fill_gaps', 'max_gaps', 'connection'];
+
+        foreach ($keys as $key) {
+            yield "empty {$key}" => [$key, ''];
+        }
+
+        foreach (['prefix', 'max_partition', 'expression', 'verify_timezone', 'future', 'fill_gaps'] as $key) {
+            yield "null {$key}" => [$key, null];
+        }
+    }
+
+    #[DataProvider('unsetGlobalValues')]
+    public function test_an_unset_global_value_behaves_like_a_missing_key(string $key, mixed $value): void
+    {
+        $tables = ['tables' => ['transactions' => ['retain' => 3]]];
+
+        self::assertSame(
+            $this->fingerprint($tables),
+            $this->fingerprint([...$tables, $key => $value])
+        );
+    }
+
+    /**
+     * @return iterable<string, array{string, mixed}>
+     */
+    public static function unsetTableValues(): iterable
+    {
+        $keys = ['table', 'strategy', 'column', 'retain', 'prefix', 'max_partition', 'tablespace', 'expression',
+            'timezone', 'verify_timezone', 'future', 'chunk', 'sync_chunk', 'fill_gaps', 'max_gaps', 'connection'];
+
+        foreach ($keys as $key) {
+            yield "empty {$key}" => [$key, ''];
+        }
+
+        foreach (['table', 'strategy', 'column', 'prefix', 'max_partition', 'expression', 'verify_timezone', 'future', 'fill_gaps'] as $key) {
+            yield "null {$key}" => [$key, null];
+        }
+    }
+
+    #[DataProvider('unsetTableValues')]
+    public function test_an_unset_table_value_behaves_like_a_missing_key(string $key, mixed $value): void
+    {
+        $global = [
+            'tablespace' => 'transactions_space',
+            'timezone' => 'Europe/Kyiv',
+            'verify_timezone' => true,
+            'future' => 2,
+            'chunk' => 2,
+            'sync_chunk' => 2,
+            'fill_gaps' => true,
+            'max_gaps' => 3,
+            'connection' => 'reports',
+        ];
+
+        $table = ['retain' => 3];
+        $missing = array_diff_key($table, [$key => true]);
+
+        self::assertSame(
+            $this->fingerprint([...$global, 'tables' => ['transactions' => $missing]]),
+            $this->fingerprint([...$global, 'tables' => ['transactions' => [...$table, $key => $value]]])
+        );
+    }
+
+    protected function dailyRepository(): FakePartitionRepository
+    {
+        return FakePartitionRepository::withPartitions([
+            'p20250601' => '739769',
+            'p20250602' => '739770',
+            'p20250603' => '739771',
+            'p20250604' => '739772',
+            'p20250605' => '739773',
+            'pMax' => 'MAXVALUE',
+        ], expression: 'to_days(`created_at`)');
+    }
+
+    /**
+     * @param  array<string, mixed>  $config
+     * @return array<string, mixed>
+     */
+    protected function fingerprint(array $config): array
+    {
+        $builder = $this->manager($config)->for('transactions');
+
+        $maintained = $this->dailyRepository();
+        $this->manager($config, $maintained)->for('transactions')->maintain();
+
+        $verified = new FakePartitionRepository;
+        $verified->unixTimestamp = 0;
+
+        try {
+            $this->manager($config, $verified)->for('transactions')->usingUnixTimestamp()->create();
+            $created = $verified->executed;
+        } catch (TimezoneMismatchException) {
+            $created = TimezoneMismatchException::class;
+        }
+
+        return [
+            'table' => $builder->getTable(),
+            'column' => $builder->getColumn(),
+            'strategy' => $builder->getStrategy()::class,
+            'connection' => $builder->getConnection(),
+            'timezone' => $builder->getTimezone()->getName(),
+            'sql' => $builder->createStatement(),
+            'maintained' => $maintained->executed,
+            'created' => $created,
+        ];
+    }
+
     /**
      * @return array<string, array{array<string, int>, int}>
      */
