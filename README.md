@@ -426,7 +426,7 @@ statement is built, instead of being read as `0`.
         'future' => 3,
         'retain' => 24,
     ],
-    'user_transactions_v2' => [
+    'payments' => [
         'strategy' => 'monthly',
         'column' => 'created_at',
         'expression' => 'unix_timestamp',
