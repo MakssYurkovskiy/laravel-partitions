@@ -618,8 +618,8 @@ $clause = Partition::table('transactions')->daily('created_at')->future(30)->par
 
 ## Events
 
-Every operation that changed something dispatches an event after a successful run — never in dry run
-mode, and never when there was nothing to do. All four carry the same payload: the table, the
+Every operation that changed something dispatches an event once its statements have run — never in
+dry run mode, and never when there was nothing to do. All four carry the same payload: the table, the
 connection, the partition names and the statements.
 
 | Event | Dispatched by |
@@ -628,6 +628,14 @@ connection, the partition names and the statements.
 | `PartitionsDropped` | `prune()`, `dropBefore()`, `dropBetween()`, `drop()` |
 | `PartitionsTruncated` | `truncate()` |
 | `PartitioningRemoved` | `removePartitioning()`, with the partitions the table had before |
+
+An operation that runs several statements — `drop()` and `truncate()` under `chunk()`, `sync()` under
+`syncChunk()` — can fail part way: DDL is not rolled back, so the statements before the failing one
+have already changed the table. The event is dispatched then too, before the exception reaches the
+caller, and carries only what ran: the partitions of the statements that succeeded and those
+statements. A listener that archives or audits therefore hears of every partition that was dropped,
+never of one that was not. When the first statement fails, nothing changed and nothing is
+dispatched.
 
 The manager behind `Partition::` and the artisan commands is built again every time it is resolved,
 from the container and the config as they are at that moment. So in the tests of an application
@@ -642,8 +650,8 @@ what it was built with.
 last partition, so their rows share the first partition created. The message is the one
 `partitions:add` prints, and the context carries the same facts as an array — `table`, `from`,
 `last`, `first_skipped`, `last_skipped`, `skipped` (a count), `holder` (the partition the rows land
-in) and `continue_at` (the start that leaves no gap). Like the events, it is written after a
-successful run only — never in dry run mode, and never with `fillGaps(false)`.
+in) and `continue_at` (the start that leaves no gap). It is written after a run in which every
+statement succeeded — never in dry run mode, and never with `fillGaps(false)`.
 
 The logger is the application's `Psr\Log\LoggerInterface`, handed to every builder the manager or
 the facade makes. A builder constructed by hand takes it as the third argument and stays silent

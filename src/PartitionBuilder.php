@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Yurkovskiy\Partitions;
 
 use Carbon\CarbonImmutable;
+use Closure;
 use DateTimeInterface;
 use DateTimeZone;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -630,8 +631,7 @@ class PartitionBuilder
         $table = $this->prefixedTable();
         $maxPartition = $this->existingMaxPartition();
 
-        return $pending
-            ->chunk($this->syncChunk ?? $pending->count())
+        return $this->grouped($pending, $this->syncChunk)
             ->map(function (Collection $group) use ($table, $maxPartition) {
                 $definitions = $this->definitionsFor($group, withMax: false);
 
@@ -669,7 +669,7 @@ class PartitionBuilder
 
         $names = collect($partitions)->map(fn (PartitionInfo $partition) => $partition->name);
 
-        return $names->chunk($this->chunk ?? $names->count())
+        return $this->grouped($names, $this->chunk)
             ->map(fn (Collection $group) => $this->grammar->dropPartitions($this->prefixedTable(), $group))
             ->values();
     }
@@ -717,19 +717,19 @@ class PartitionBuilder
         }
 
         $gap = $this->gap();
+        $names = $plan->pending->map(fn (PendingPartition $partition) => $partition->name);
+        $groups = $this->grouped($names, $this->syncChunk);
 
-        $this->run($statements, $plan->pending);
+        $this->run($statements, $plan->pending, fn (int $executed) => $this->fire(new PartitionsCreated(
+            $this->getTable(),
+            $this->getConnection(),
+            $groups->take($executed)->flatten()->all(),
+            $statements->take($executed)->all(),
+        )));
 
         if ($gap !== null) {
             $this->warn($gap->message(), $gap->toArray());
         }
-
-        $this->fire(new PartitionsCreated(
-            $this->getTable(),
-            $this->getConnection(),
-            $plan->pending->map(fn (PendingPartition $partition) => $partition->name)->all(),
-            $statements->all(),
-        ));
 
         return $statements;
     }
@@ -794,18 +794,17 @@ class PartitionBuilder
             return collect();
         }
 
-        $statements = $names->chunk($this->chunk ?? $names->count())
-            ->map(fn (Collection $chunk) => $this->grammar->truncatePartitions($this->prefixedTable(), $chunk))
+        $groups = $this->grouped($names, $this->chunk);
+        $statements = $groups
+            ->map(fn (Collection $group) => $this->grammar->truncatePartitions($this->prefixedTable(), $group))
             ->values();
 
-        $this->run($statements);
-
-        $this->fire(new PartitionsTruncated(
+        $this->run($statements, executed: fn (int $executed) => $this->fire(new PartitionsTruncated(
             $this->getTable(),
             $this->getConnection(),
-            $names->values()->all(),
-            $statements->all(),
-        ));
+            $groups->take($executed)->flatten()->all(),
+            $statements->take($executed)->all(),
+        )));
 
         return $statements;
     }
@@ -851,15 +850,14 @@ class PartitionBuilder
         }
 
         $statements = $this->dropStatements($partitions);
+        $groups = $this->grouped($partitions->map(fn (PartitionInfo $partition) => $partition->name), $this->chunk);
 
-        $this->run($statements);
-
-        $this->fire(new PartitionsDropped(
+        $this->run($statements, executed: fn (int $executed) => $this->fire(new PartitionsDropped(
             $this->getTable(),
             $this->getConnection(),
-            $partitions->map(fn (PartitionInfo $partition) => $partition->name)->all(),
-            $statements->all(),
-        ));
+            $groups->take($executed)->flatten()->all(),
+            $statements->take($executed)->all(),
+        )));
 
         return $statements;
     }
@@ -1211,12 +1209,26 @@ class PartitionBuilder
     }
 
     /**
+     * @template TValue
+     *
+     * @param  Collection<int, TValue>  $items
+     * @return Collection<int, Collection<int, TValue>>
+     */
+    protected function grouped(Collection $items, ?int $size): Collection
+    {
+        return $items->isEmpty()
+            ? collect()
+            : $items->values()->chunk($size ?? $items->count())->map(fn (Collection $group) => $group->values())->values();
+    }
+
+    /**
      * @param  Collection<int, string>  $statements
      * @param  Collection<int, PendingPartition>|null  $writing
+     * @param  (Closure(int): void)|null  $executed
      *
      * @throws TimezoneMismatchException
      */
-    protected function run(Collection $statements, ?Collection $writing = null): void
+    protected function run(Collection $statements, ?Collection $writing = null, ?Closure $executed = null): void
     {
         if ($this->verifiesTimezone()) {
             $this->assertSessionReads($writing ?? collect());
@@ -1226,10 +1238,20 @@ class PartitionBuilder
             return;
         }
 
+        $done = 0;
+
         try {
-            $statements->each(fn (string $sql) => $this->repository->statement($this->getConnection(), $sql));
+            foreach ($statements as $sql) {
+                $this->repository->statement($this->getConnection(), $sql);
+
+                $done++;
+            }
         } finally {
             $this->refresh();
+
+            if ($executed !== null && $done > 0) {
+                $executed($done);
+            }
         }
     }
 

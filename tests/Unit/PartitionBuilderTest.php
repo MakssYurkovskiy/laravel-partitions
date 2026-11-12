@@ -1815,9 +1815,12 @@ REORGANIZE PARTITION `pMax` INTO (
 
         $this->assertSame([['pMax', 'p20250615', 'pMax'], ['pMax', 'p20250616', 'pMax']], $this->partitionNames($statements));
         $this->assertSame(['p20250613', 'p20250614', 'p20250615', 'p20250616', 'pMax'], $repository->names());
-        $this->assertCount(1, $events->dispatched);
+        $this->assertCount(2, $events->dispatched);
         $this->assertInstanceOf(PartitionsCreated::class, $events->dispatched[0]);
-        $this->assertSame(['p20250615', 'p20250616'], $events->dispatched[0]->partitions);
+        $this->assertSame(['p20250614'], $events->dispatched[0]->partitions);
+        $this->assertCount(1, $events->dispatched[0]->statements);
+        $this->assertInstanceOf(PartitionsCreated::class, $events->dispatched[1]);
+        $this->assertSame(['p20250615', 'p20250616'], $events->dispatched[1]->partitions);
     }
 
     public function test_another_builder_given_a_partly_applied_plan_sends_only_what_is_still_missing(): void
@@ -2319,5 +2322,93 @@ REORGANIZE PARTITION `pMax` INTO (
         $this->expectException(DropsEveryPartitionException::class);
 
         $builder->drop($builder->existing());
+    }
+
+    /**
+     * @return iterable<string, array{0: int|null, 1: int, 2: list<string>, 3: int}>
+     */
+    public static function failuresPartWayThrough(): iterable
+    {
+        yield 'third of four statements' => [1, 3, ['p20250609', 'p20250610'], 2];
+        yield 'second of two chunks' => [2, 2, ['p20250609', 'p20250610'], 1];
+        yield 'last statement' => [1, 4, ['p20250609', 'p20250610', 'p20250611'], 3];
+    }
+
+    /**
+     * @param  list<string>  $reported
+     */
+    #[DataProvider('failuresPartWayThrough')]
+    public function test_a_drop_that_fails_part_way_reports_the_partitions_it_dropped(?int $chunk, int $failing, array $reported, int $statements): void
+    {
+        $repository = $this->fourDaysAndMax();
+        $repository->failingStatement = $failing;
+        $events = new FakeDispatcher;
+
+        $builder = (new PartitionBuilder($repository, $events))->table('transactions')->daily('created_at')->chunk($chunk);
+
+        try {
+            $builder->dropBefore('2025-06-13');
+
+            self::fail('The failing statement went unnoticed.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('Lock wait timeout exceeded; try restarting transaction', $exception->getMessage());
+        }
+
+        self::assertCount(1, $events->dispatched);
+
+        $event = $events->dispatched[0];
+
+        self::assertInstanceOf(PartitionsDropped::class, $event);
+        self::assertSame($reported, $event->partitions);
+        self::assertSame($repository->executed, $event->statements);
+        self::assertCount($statements, $event->statements);
+    }
+
+    public function test_a_truncate_that_fails_part_way_reports_the_partitions_it_emptied(): void
+    {
+        $repository = $this->fourDaysAndMax();
+        $repository->failingStatement = 2;
+        $events = new FakeDispatcher;
+
+        $builder = (new PartitionBuilder($repository, $events))->table('transactions')->daily('created_at');
+
+        try {
+            $builder->truncate($builder->inRange('2025-06-09', '2025-06-11'));
+
+            self::fail('The failing statement went unnoticed.');
+        } catch (RuntimeException) {
+        }
+
+        self::assertCount(1, $events->dispatched);
+        self::assertInstanceOf(PartitionsTruncated::class, $events->dispatched[0]);
+        self::assertSame(['p20250609'], $events->dispatched[0]->partitions);
+        self::assertSame($repository->executed, $events->dispatched[0]->statements);
+    }
+
+    public function test_a_first_statement_that_fails_reports_nothing(): void
+    {
+        $repository = $this->fourDaysAndMax();
+        $repository->failingStatement = 1;
+        $events = new FakeDispatcher;
+
+        try {
+            (new PartitionBuilder($repository, $events))->table('transactions')->daily('created_at')->dropBefore('2025-06-13');
+
+            self::fail('The failing statement went unnoticed.');
+        } catch (RuntimeException) {
+        }
+
+        self::assertSame([], $events->dispatched);
+    }
+
+    protected function fourDaysAndMax(): FakePartitionRepository
+    {
+        return FakePartitionRepository::withPartitions([
+            'p20250609' => '739777',
+            'p20250610' => '739778',
+            'p20250611' => '739779',
+            'p20250612' => '739780',
+            'pMax' => 'MAXVALUE',
+        ]);
     }
 }
