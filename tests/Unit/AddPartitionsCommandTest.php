@@ -41,7 +41,7 @@ class AddPartitionsCommandTest extends CommandTestCase
         array $config = [],
         ?FakeLogger $logger = null,
     ): AddPartitionsCommand {
-        return new AddPartitionsCommand(new PartitionManager($repository, null, $config, $logger));
+        return $this->withManager(new AddPartitionsCommand, new PartitionManager($repository, null, $config, $logger));
     }
 
     protected function gapWarning(): string

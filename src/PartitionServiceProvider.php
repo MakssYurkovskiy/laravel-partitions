@@ -28,7 +28,7 @@ class PartitionServiceProvider extends ServiceProvider
             $app->make(ConnectionResolverInterface::class)
         ));
 
-        $this->app->singleton(PartitionManager::class, fn ($app) => new PartitionManager(
+        $this->app->bind(PartitionManager::class, fn ($app) => new PartitionManager(
             $app->make(PartitionRepository::class),
             $app->bound(Dispatcher::class) ? $app->make(Dispatcher::class) : null,
             (array) $app['config']->get('partitions', []),

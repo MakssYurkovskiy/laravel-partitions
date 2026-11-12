@@ -119,7 +119,7 @@ class UnattendedTableTest extends CommandTestCase
 
         $repository = $this->abandoned();
         $dry = $this->runCommand(
-            new RunPartitionsCommand(new PartitionManager($repository, null, $config)),
+            $this->withManager(new RunPartitionsCommand, new PartitionManager($repository, null, $config)),
             ['--dry-run' => true],
         );
 
@@ -127,7 +127,7 @@ class UnattendedTableTest extends CommandTestCase
         self::assertMatchesRegularExpression('/12 \(\+86 left\)\s+\|\s+52\s+\|/', $dry->getDisplay());
         self::assertSame([], $repository->executed);
 
-        $real = $this->runCommand(new RunPartitionsCommand(new PartitionManager($repository, null, $config)));
+        $real = $this->runCommand($this->withManager(new RunPartitionsCommand, new PartitionManager($repository, null, $config)));
 
         self::assertSame(Command::SUCCESS, $real->getStatusCode());
         self::assertMatchesRegularExpression('/12 \(\+86 left\)\s+\|\s+52\s+\|/', $real->getDisplay());

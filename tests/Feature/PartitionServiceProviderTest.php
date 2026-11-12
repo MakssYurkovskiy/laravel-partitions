@@ -8,11 +8,13 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\Schema\Grammars\Grammar;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Orchestra\Testbench\Attributes\DefineEnvironment;
 use Orchestra\Testbench\TestCase;
 use Psr\Log\LoggerInterface;
 use Yurkovskiy\Partitions\Contracts\PartitionRepository;
+use Yurkovskiy\Partitions\Events\PartitionsCreated;
 use Yurkovskiy\Partitions\Facades\Partition;
 use Yurkovskiy\Partitions\PartitionManager;
 use Yurkovskiy\Partitions\PartitionServiceProvider;
@@ -117,16 +119,66 @@ class PartitionServiceProviderTest extends TestCase
         self::assertSame($this->app->configPath('partitions.php'), reset($paths));
     }
 
-    public function test_the_repository_and_the_manager_are_shared_singletons(): void
+    public function test_the_repository_is_shared_and_the_manager_is_built_on_every_resolve(): void
     {
         $repository = $this->app->make(PartitionRepository::class);
         $manager = $this->app->make(PartitionManager::class);
 
         self::assertInstanceOf(MySqlPartitionRepository::class, $repository);
         self::assertSame($repository, $this->app->make(PartitionRepository::class));
-        self::assertSame($manager, $this->app->make(PartitionManager::class));
-        self::assertSame($manager, $this->app->make('partitions'));
-        self::assertSame($manager, Partition::getFacadeRoot());
+        self::assertNotSame($manager, $this->app->make(PartitionManager::class));
+        self::assertNotSame($manager, $this->app->make('partitions'));
+        self::assertNotSame(Partition::getFacadeRoot(), Partition::getFacadeRoot());
+    }
+
+    public function test_events_faked_after_artisan_has_loaded_reach_the_facade(): void
+    {
+        Artisan::call('list');
+        Partition::table('transactions');
+
+        Event::fake();
+        $this->app->instance(PartitionRepository::class, $repository = new FakePartitionRepository);
+
+        Partition::table('transactions')->daily('created_at')->between('2025-06-25', '2025-06-26')->sync();
+
+        self::assertCount(1, $repository->executed);
+        Event::assertDispatched(PartitionsCreated::class);
+    }
+
+    public function test_a_logger_swapped_after_artisan_has_loaded_reaches_the_facade(): void
+    {
+        Artisan::call('list');
+        Partition::table('transactions');
+
+        $this->app->instance('log', $logger = new FakeLogger);
+        $this->app->instance(PartitionRepository::class, FakePartitionRepository::withPartitions([
+            'p20250620' => '739788',
+            'pMax' => 'MAXVALUE',
+        ]));
+
+        Partition::table('transactions')->daily('created_at')->between('2025-06-25', '2025-06-26')->sync();
+
+        self::assertCount(1, $logger->records);
+    }
+
+    public function test_config_set_after_artisan_has_loaded_reaches_the_facade_and_the_commands(): void
+    {
+        Artisan::call('list');
+        Partition::table('transactions');
+
+        self::assertFalse(Partition::isConfigured('transactions'));
+
+        $this->app->instance(PartitionRepository::class, new FakePartitionRepository);
+        $this->app['config']->set('partitions.prefix', 'txn');
+        $this->app['config']->set('partitions.tables', [
+            'transactions' => ['strategy' => 'monthly', 'column' => 'processed_at', 'future' => 1],
+        ]);
+
+        self::assertSame('txn202506', Partition::for('transactions')->partitionNameFor('2025-06-13'));
+
+        Artisan::call('partitions:run', ['--dry-run' => true]);
+
+        self::assertMatchesRegularExpression('/\| transactions\s+\| transactions\s+\|/', Artisan::output());
     }
 
     public function test_builders_write_to_the_application_log(): void

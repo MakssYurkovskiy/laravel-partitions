@@ -12,10 +12,8 @@ use Yurkovskiy\Partitions\Console\DropPartitionsCommand;
 use Yurkovskiy\Partitions\Console\ListPartitionsCommand;
 use Yurkovskiy\Partitions\Console\PartitionCommand;
 use Yurkovskiy\Partitions\Console\RunPartitionsCommand;
-use Yurkovskiy\Partitions\PartitionManager;
 use Yurkovskiy\Partitions\Schema\PartitionExpression;
 use Yurkovskiy\Partitions\Schema\PartitionPeriod;
-use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
 
 class CommandHelpTest extends TestCase
 {
@@ -27,11 +25,6 @@ class CommandHelpTest extends TestCase
         'prefix' => 'Partition name prefix',
         'connection' => 'Database connection',
     ];
-
-    protected function manager(): PartitionManager
-    {
-        return new PartitionManager(new FakePartitionRepository);
-    }
 
     /**
      * @return array<string, mixed>
@@ -65,12 +58,12 @@ class CommandHelpTest extends TestCase
     #[DataProvider('tableCommands')]
     public function test_a_command_that_takes_a_table_describes_it_with_the_same_options(string $command): void
     {
-        self::assertSame(self::TABLE_OPTIONS, $this->tableOptionsOf(new $command($this->manager())));
+        self::assertSame(self::TABLE_OPTIONS, $this->tableOptionsOf(new $command));
     }
 
     public function test_the_strategy_help_names_every_period_and_every_shorthand(): void
     {
-        $description = (new AddPartitionsCommand($this->manager()))
+        $description = (new AddPartitionsCommand)
             ->getDefinition()
             ->getOption('strategy')
             ->getDescription();
@@ -85,7 +78,7 @@ class CommandHelpTest extends TestCase
 
     public function test_the_expression_help_names_every_expression(): void
     {
-        $description = (new AddPartitionsCommand($this->manager()))
+        $description = (new AddPartitionsCommand)
             ->getDefinition()
             ->getOption('expression')
             ->getDescription();
@@ -97,7 +90,7 @@ class CommandHelpTest extends TestCase
 
     public function test_the_table_options_take_a_value_that_may_be_left_empty(): void
     {
-        $definition = (new AddPartitionsCommand($this->manager()))->getDefinition();
+        $definition = (new AddPartitionsCommand)->getDefinition();
 
         foreach (array_keys(self::TABLE_OPTIONS) as $name) {
             self::assertTrue($definition->getOption($name)->isValueOptional(), $name);
@@ -106,9 +99,9 @@ class CommandHelpTest extends TestCase
 
     public function test_the_options_of_a_signature_are_kept_next_to_the_shared_ones(): void
     {
-        $definition = (new AddPartitionsCommand($this->manager()))->getDefinition();
+        $definition = (new AddPartitionsCommand)->getDefinition();
 
-        self::assertSame('partitions:add', (new AddPartitionsCommand($this->manager()))->getName());
+        self::assertSame('partitions:add', (new AddPartitionsCommand)->getName());
         self::assertTrue($definition->hasArgument('table'));
         self::assertSame(
             ['strategy', 'column', 'expression', 'prefix', 'connection', 'from', 'to', 'future'],
@@ -118,14 +111,14 @@ class CommandHelpTest extends TestCase
 
     public function test_the_run_command_takes_no_table_options(): void
     {
-        $definition = (new RunPartitionsCommand($this->manager()))->getDefinition();
+        $definition = (new RunPartitionsCommand)->getDefinition();
 
         self::assertSame(['dry-run'], array_keys($definition->getOptions()));
     }
 
     public function test_a_command_declared_by_name_alone_is_built_with_the_table_options(): void
     {
-        $command = new class($this->manager()) extends PartitionCommand
+        $command = new class extends PartitionCommand
         {
             protected $name = 'partitions:named';
         };
@@ -140,7 +133,7 @@ class CommandHelpTest extends TestCase
             self::markTestSkipped('The Signature attribute ships with Laravel 13.');
         }
 
-        $command = new #[Signature('partitions:attributed {table} {--dry-run}')] class($this->manager()) extends PartitionCommand {};
+        $command = new #[Signature('partitions:attributed {table} {--dry-run}')] class extends PartitionCommand {};
 
         self::assertSame('partitions:attributed', $command->getName());
         self::assertTrue($command->getDefinition()->hasArgument('table'));
@@ -153,7 +146,7 @@ class CommandHelpTest extends TestCase
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('An option named "strategy" already exists.');
 
-        new class($this->manager()) extends PartitionCommand
+        new class extends PartitionCommand
         {
             protected $signature = 'partitions:clash {--strategy}';
         };

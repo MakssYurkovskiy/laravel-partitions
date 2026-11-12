@@ -329,7 +329,7 @@ class PeriodLifecycleTest extends CommandTestCase
     {
         $repository = new FakePartitionRepository;
 
-        $tester = $this->runCommand(new AddPartitionsCommand(new PartitionManager($repository)), [
+        $tester = $this->runCommand($this->withManager(new AddPartitionsCommand, new PartitionManager($repository)), [
             'table' => 'transactions',
             '--strategy' => $period,
             '--future' => '2',
@@ -347,7 +347,7 @@ class PeriodLifecycleTest extends CommandTestCase
     {
         $repository = $this->partitioned($period);
 
-        $tester = $this->runCommand(new AddPartitionsCommand(new PartitionManager($repository)), [
+        $tester = $this->runCommand($this->withManager(new AddPartitionsCommand, new PartitionManager($repository)), [
             'table' => 'transactions',
             '--strategy' => $period,
             '--future' => '2',
@@ -363,7 +363,7 @@ class PeriodLifecycleTest extends CommandTestCase
     {
         $repository = $this->partitioned($period);
 
-        $tester = $this->runCommand(new DropPartitionsCommand(new PartitionManager($repository)), [
+        $tester = $this->runCommand($this->withManager(new DropPartitionsCommand, new PartitionManager($repository)), [
             'table' => 'transactions',
             '--strategy' => $period,
             '--retain' => '2',
@@ -379,7 +379,7 @@ class PeriodLifecycleTest extends CommandTestCase
     {
         $repository = $this->partitioned($period);
 
-        $tester = $this->runCommand(new DropPartitionsCommand(new PartitionManager($repository)), [
+        $tester = $this->runCommand($this->withManager(new DropPartitionsCommand, new PartitionManager($repository)), [
             'table' => 'transactions',
             '--strategy' => $period,
             '--before' => self::PERIODS[$period]['before'],
@@ -395,7 +395,7 @@ class PeriodLifecycleTest extends CommandTestCase
     {
         $repository = $this->partitioned($period);
 
-        $tester = $this->runCommand(new DropPartitionsCommand(new PartitionManager($repository)), [
+        $tester = $this->runCommand($this->withManager(new DropPartitionsCommand, new PartitionManager($repository)), [
             'table' => 'transactions',
             '--strategy' => $period,
             '--from' => self::PERIODS[$period]['from'],
@@ -412,7 +412,7 @@ class PeriodLifecycleTest extends CommandTestCase
     {
         $repository = $this->partitioned($period);
 
-        $tester = $this->runCommand(new RunPartitionsCommand(new PartitionManager($repository, null, [
+        $tester = $this->runCommand($this->withManager(new RunPartitionsCommand, new PartitionManager($repository, null, [
             'tables' => ['transactions' => ['strategy' => $period, 'future' => 2, 'retain' => 2]],
         ])));
 

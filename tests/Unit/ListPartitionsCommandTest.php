@@ -34,7 +34,7 @@ class ListPartitionsCommandTest extends CommandTestCase
      */
     protected function command(FakePartitionRepository $repository, array $config = []): ListPartitionsCommand
     {
-        return new ListPartitionsCommand(new PartitionManager($repository, null, $config));
+        return $this->withManager(new ListPartitionsCommand, new PartitionManager($repository, null, $config));
     }
 
     protected function partitioned(): FakePartitionRepository

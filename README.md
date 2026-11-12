@@ -613,6 +613,13 @@ connection, the partition names and the statements.
 | `PartitionsTruncated` | `truncate()` |
 | `PartitioningRemoved` | `removePartitioning()`, with the partitions the table had before |
 
+The manager behind `Partition::` and the artisan commands is built again every time it is resolved,
+from the container and the config as they are at that moment. So in the tests of an application
+`Event::fake()`, `Log::spy()`, `config(['partitions.tables' => ...])` and a `PartitionRepository`
+bound to a fake apply to the next `Partition::` call and the next command run, however early the
+package was first used. A `PartitionManager` injected into a long-lived object of your own keeps
+what it was built with.
+
 ### Log
 
 `sync()` writes one thing to the log: a warning when an explicit `from()` skipped periods after the
