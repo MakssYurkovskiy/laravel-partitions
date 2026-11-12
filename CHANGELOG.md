@@ -49,6 +49,9 @@ silent or half-done run into a refusal, so read "Changed" before upgrading.
 - A published config whose `schedule` array had no `on_one_server` key scheduled `partitions:run`
   without `onOneServer()`, although the default is `true`.
 - `--future=99999999999999999999` hung the command instead of failing it.
+- A `retain` far past anything a table can hold — `--retain=999999999999` — walked back one period
+  at a time and did not finish. The walk now stops once the cutoff is before the year 1000, the
+  earliest date MySQL stores; what `outdated()` selects is unchanged.
 
 ## [0.1.2] - 2026-11-12
 

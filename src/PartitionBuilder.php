@@ -50,6 +50,10 @@ class PartitionBuilder
 
     protected const MAX_PARTITIONS = 8192;
 
+    protected const EARLIEST_YEAR = 1000;
+
+    protected const RETENTION_STRIDE = 512;
+
     protected string $table = '';
 
     protected string $column = 'created_at';
@@ -1189,9 +1193,21 @@ class PartitionBuilder
 
     protected function retentionCutoff(): ?CarbonImmutable
     {
-        return $this->retain === null
-            ? null
-            : $this->getStrategy()->shift($this->now(), -$this->retain);
+        if ($this->retain === null) {
+            return null;
+        }
+
+        $strategy = $this->getStrategy();
+        $cutoff = $this->now();
+        $left = $this->retain;
+
+        do {
+            $stride = min($left, self::RETENTION_STRIDE);
+            $cutoff = $strategy->shift($cutoff, -$stride);
+            $left -= $stride;
+        } while ($left > 0 && $cutoff->year >= self::EARLIEST_YEAR);
+
+        return $cutoff;
     }
 
     protected function resolveFrom(?DateTimeInterface $floor = null): CarbonImmutable

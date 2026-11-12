@@ -6,6 +6,7 @@ namespace Yurkovskiy\Partitions\Tests\Unit;
 
 use Carbon\CarbonImmutable;
 use Closure;
+use DateTimeImmutable;
 use Illuminate\Database\Eloquent\Model;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -26,6 +27,7 @@ use Yurkovskiy\Partitions\Exceptions\UnknownStrategyException;
 use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\Schema\PendingPartition;
 use Yurkovskiy\Partitions\Schema\TableInfo;
+use Yurkovskiy\Partitions\Support\MySqlDate;
 use Yurkovskiy\Partitions\Tests\Support\CountingDailyStrategy;
 use Yurkovskiy\Partitions\Tests\Support\FakeDispatcher;
 use Yurkovskiy\Partitions\Tests\Support\FakeLogger;
@@ -2448,5 +2450,53 @@ REORGANIZE PARTITION `pMax` INTO (
             ->createStatement();
 
         self::assertSame(306, substr_count($sql, 'VALUES LESS THAN ('));
+    }
+
+    /**
+     * @return iterable<string, array{0: string, 1: array<string, string>}>
+     */
+    public static function periodsUnderAnEndlessRetention(): iterable
+    {
+        yield 'daily' => ['daily', ['p20250611' => '739779', 'p20250612' => '739780']];
+        yield 'weekly' => ['weekly', ['p202522' => '739769', 'p202523' => '739776']];
+        yield 'monthly' => ['monthly', ['p202504' => '739737', 'p202505' => '739768']];
+        yield 'yearly' => ['yearly', ['p2023' => '739251', 'p2024' => '739617']];
+    }
+
+    /**
+     * @param  array<string, string>  $partitions
+     */
+    #[DataProvider('periodsUnderAnEndlessRetention')]
+    public function test_a_retention_longer_than_any_table_is_not_walked_to_its_end(string $strategy, array $partitions): void
+    {
+        $repository = FakePartitionRepository::withPartitions([...$partitions, 'pMax' => 'MAXVALUE']);
+        $builder = $this->builder($repository)->table('transactions')->strategy($strategy, 'created_at')->retain(PHP_INT_MAX);
+
+        $started = microtime(true);
+
+        self::assertSame([], $builder->outdated()->all());
+        self::assertLessThan(30, microtime(true) - $started);
+    }
+
+    public function test_a_retention_of_many_strides_ends_on_the_same_day_as_one_walk(): void
+    {
+        $days = fn (string $date): string => (string) MySqlDate::toDays(new DateTimeImmutable($date));
+        $repository = FakePartitionRepository::withPartitions([
+            'p19980125' => $days('1998-01-26'),
+            'p19980126' => $days('1998-01-27'),
+            'p20250612' => $days('2025-06-13'),
+            'pMax' => 'MAXVALUE',
+        ]);
+
+        $outdated = $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->retain(10_000)
+            ->outdated()
+            ->pluck('name')
+            ->all();
+
+        self::assertSame('1998-01-26', CarbonImmutable::parse('2025-06-13')->subDays(10_000)->toDateString());
+        self::assertSame(['p19980125'], $outdated);
     }
 }
