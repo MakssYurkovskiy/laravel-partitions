@@ -14,6 +14,7 @@ use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\PartitionManager;
 use Yurkovskiy\Partitions\Schema\PartitionExpression;
 use Yurkovskiy\Partitions\Schema\PartitionPeriod;
+use Yurkovskiy\Partitions\Support\WholeNumber;
 
 abstract class PartitionCommand extends Command
 {
@@ -130,11 +131,13 @@ abstract class PartitionCommand extends Command
             return null;
         }
 
-        if (! ctype_digit($value)) {
+        $number = WholeNumber::parse($value);
+
+        if ($number === null) {
             $this->fail(sprintf('The --%s option takes a whole number, zero or above; [%s] given.', $key, $value));
         }
 
-        return (int) $value;
+        return $number;
     }
 
     /**

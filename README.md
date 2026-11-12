@@ -452,6 +452,15 @@ the config file — no pruning, one statement, no limit. So `'timezone' => env('
 without the variable leaves the table on `partitions.timezone`. What turns a global `tablespace`,
 `timezone` or `max_partition` off for one table is `false`.
 
+A number is read as strictly as an option of the commands. `future`, `retain`, `chunk`, `sync_chunk`
+and `max_gaps` take a whole number, zero or above — an integer, or a string of digits, which is what
+`env()` returns. Anything else — `false`, `'abc'`, `-1`, `1.5` — throws an
+`InvalidConfigValueException` naming the setting and the table when the builder is made, before a
+statement is built, instead of being cast to `0`: `'retain' => false` does not become `retain(0)`,
+which would hand the whole history to `prune()`. A table that is not pruned has `'retain' => null`,
+or no `retain` at all. `partitions:run` reports a table with such a value as failed and maintains the
+rest.
+
 Configured tables are addressable by key:
 
 ```php
@@ -655,6 +664,7 @@ whole, while a single case can be caught on its own.
 | --- | --- |
 | `UnknownTableException` | the table key is missing from `config/partitions.php` — `Partition::for()`, `partitions:run {table}` |
 | `InvalidTableConfigException` | the table key is in `config/partitions.php`, but holds something other than an array of settings — `Partition::for()`, `configured()`, the artisan commands, and a migration of the table named by that key |
+| `InvalidConfigValueException` | `future`, `retain`, `chunk`, `sync_chunk` or `max_gaps` in `config/partitions.php` is not a whole number, zero or above — `false`, a word, a negative number, a float — globally or for a table; thrown when the builder is made |
 | `UnknownStrategyException` | `strategy()` got a name that is neither daily/weekly/monthly/yearly nor a `PartitionStrategy` class, or a configured table's `strategy` is not a name, a `PartitionPeriod` case or a strategy at all |
 | `UnknownExpressionException` | `expression()` got something other than `to_days`, `unix_timestamp` or `columns` |
 | `MissingStrategyException` | the builder reached SQL without a strategy |

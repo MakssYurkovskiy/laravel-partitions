@@ -7,6 +7,7 @@ namespace Yurkovskiy\Partitions\Tests\Unit;
 use Carbon\CarbonImmutable;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Yurkovskiy\Partitions\Exceptions\InvalidConfigValueException;
 use Yurkovskiy\Partitions\Exceptions\InvalidTableConfigException;
 use Yurkovskiy\Partitions\Exceptions\PartitionException;
 use Yurkovskiy\Partitions\Exceptions\TimezoneMismatchException;
@@ -240,6 +241,114 @@ class PartitionManagerTest extends TestCase
 
         self::assertNotEmpty($repository->executed);
         self::assertSame([], array_filter($repository->executed, fn (string $sql): bool => str_contains($sql, 'DROP')));
+    }
+
+    /**
+     * @return iterable<string, array{string, mixed, string}>
+     */
+    public static function valuesThatAreNotWholeNumbers(): iterable
+    {
+        $values = [
+            'false' => [false, 'false'],
+            'true' => [true, 'true'],
+            'a word' => ['abc', "'abc'"],
+            'a number with a unit' => ['90 days', "'90 days'"],
+            'a negative number' => [-5, '-5'],
+            'a negative numeric string' => ['-5', "'-5'"],
+            'a float' => [1.9, '1.9'],
+            'an array' => [[], 'array'],
+            'a number past the integer range' => ['99999999999999999999', "'99999999999999999999'"],
+        ];
+
+        foreach (['retain', 'future', 'chunk', 'sync_chunk', 'max_gaps'] as $setting) {
+            foreach ($values as $label => [$value, $shown]) {
+                yield "{$setting}: {$label}" => [$setting, $value, $shown];
+            }
+        }
+    }
+
+    #[DataProvider('valuesThatAreNotWholeNumbers')]
+    public function test_a_table_number_that_is_not_a_whole_number_is_refused(string $setting, mixed $value, string $shown): void
+    {
+        $repository = $this->dailyRepository();
+        $nullable = $setting === 'future' ? '' : ', or null';
+
+        try {
+            $this->manager(['tables' => ['transactions' => [$setting => $value]]], $repository)->for('transactions');
+
+            self::fail('The value was accepted.');
+        } catch (InvalidConfigValueException $e) {
+            self::assertSame(
+                "Setting [{$setting}] of table [transactions] in config/partitions.php has to be a whole number, "
+                ."zero or above{$nullable}; {$shown} given.",
+                $e->getMessage()
+            );
+        }
+
+        self::assertSame([], $repository->executed);
+    }
+
+    /**
+     * @return iterable<string, array{string, mixed, string}>
+     */
+    public static function globalValuesThatAreNotWholeNumbers(): iterable
+    {
+        foreach (self::valuesThatAreNotWholeNumbers() as $label => $case) {
+            if ($case[0] !== 'retain') {
+                yield $label => $case;
+            }
+        }
+    }
+
+    #[DataProvider('globalValuesThatAreNotWholeNumbers')]
+    public function test_a_global_number_that_is_not_a_whole_number_is_refused(string $setting, mixed $value, string $shown): void
+    {
+        $nullable = $setting === 'future' ? '' : ', or null';
+
+        $this->expectException(InvalidConfigValueException::class);
+        $this->expectExceptionMessage(
+            "Setting [{$setting}] in config/partitions.php has to be a whole number, zero or above{$nullable}; {$shown} given."
+        );
+
+        $this->manager([$setting => $value])->table('transactions');
+    }
+
+    public function test_a_retain_of_false_does_not_select_the_history(): void
+    {
+        $repository = $this->dailyRepository();
+
+        try {
+            $this->manager(['tables' => ['transactions' => ['retain' => false]]], $repository)
+                ->for('transactions')
+                ->maintain();
+
+            self::fail('The value was accepted.');
+        } catch (InvalidConfigValueException) {
+            self::assertSame([], $repository->executed);
+        }
+    }
+
+    /**
+     * @return iterable<string, array{string, mixed, int|null}>
+     */
+    public static function wholeNumbers(): iterable
+    {
+        yield 'an integer' => ['retain', 2, 2];
+        yield 'zero' => ['retain', 0, 0];
+        yield 'a string of digits' => ['retain', '2', 2];
+        yield 'a string with leading zeros' => ['retain', '002', 2];
+        yield 'null' => ['retain', null, null];
+    }
+
+    #[DataProvider('wholeNumbers')]
+    public function test_a_whole_number_is_read_as_given(string $setting, mixed $value, ?int $expected): void
+    {
+        $builder = $this->manager(['tables' => ['transactions' => [$setting => $value]]], $this->dailyRepository())
+            ->for('transactions');
+
+        $reference = $this->manager([], $this->dailyRepository())->table('transactions')->daily()->retain($expected);
+
+        self::assertSame($reference->outdated()->pluck('name')->all(), $builder->outdated()->pluck('name')->all());
     }
 
     /**
