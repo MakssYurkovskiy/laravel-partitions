@@ -16,7 +16,7 @@ class YearlyStrategy extends AbstractStrategy
 
     public function next(DateTimeInterface $date): CarbonImmutable
     {
-        return $this->start($date)->addYear();
+        return $this->start($this->start($date)->addYear());
     }
 
     protected function format(): string

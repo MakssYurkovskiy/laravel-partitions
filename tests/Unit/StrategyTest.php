@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Yurkovskiy\Partitions\Tests\Unit;
 
 use Carbon\CarbonImmutable;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Yurkovskiy\Partitions\Contracts\PartitionStrategy;
 use Yurkovskiy\Partitions\Strategies\DailyStrategy;
 use Yurkovskiy\Partitions\Strategies\MonthlyStrategy;
 use Yurkovskiy\Partitions\Strategies\WeeklyStrategy;
@@ -99,6 +101,44 @@ class StrategyTest extends TestCase
 
         $this->assertSame('2025-09-01', $strategy->shift(CarbonImmutable::parse('2025-06-13'), 3)->toDateString());
         $this->assertSame('2025-03-01', $strategy->shift(CarbonImmutable::parse('2025-06-13'), -3)->toDateString());
+    }
+
+    /**
+     * @return iterable<string, array{0: PartitionStrategy, 1: string, 2: string, 3: string}>
+     */
+    public static function skippedMidnights(): iterable
+    {
+        yield 'daily' => [new DailyStrategy, 'America/Santiago', '2026-09-06', '2026-09-07'];
+        yield 'weekly' => [new WeeklyStrategy, 'Asia/Tehran', '2021-03-22', '2021-03-29'];
+        yield 'monthly' => [new MonthlyStrategy, 'America/Asuncion', '2023-10-01', '2023-11-01'];
+        yield 'yearly' => [new YearlyStrategy, 'Asia/Khandyga', '2004-01-01', '2005-01-01'];
+    }
+
+    #[DataProvider('skippedMidnights')]
+    public function test_a_period_starting_on_a_skipped_midnight_still_ends_at_midnight(
+        PartitionStrategy $strategy,
+        string $zone,
+        string $start,
+        string $next
+    ): void {
+        $date = CarbonImmutable::parse("$start 12:00:00", $zone);
+
+        $this->assertSame("$start 01:00:00", $strategy->start($date)->format('Y-m-d H:i:s'));
+        $this->assertSame("$next 00:00:00", $strategy->next($date)->format('Y-m-d H:i:s'));
+        $this->assertSame("$next 00:00:00", $strategy->shift($date, 1)->format('Y-m-d H:i:s'));
+    }
+
+    public function test_periods_return_to_midnight_after_a_skipped_one(): void
+    {
+        $periods = collect((new DailyStrategy)->periods(
+            CarbonImmutable::parse('2026-09-05', 'America/Santiago'),
+            CarbonImmutable::parse('2026-09-08', 'America/Santiago')
+        ))->map(fn (CarbonImmutable $date) => $date->format('Y-m-d H:i'))->all();
+
+        $this->assertSame(
+            ['2026-09-05 00:00', '2026-09-06 01:00', '2026-09-07 00:00', '2026-09-08 00:00'],
+            $periods
+        );
     }
 
     public function test_foreign_partition_names_are_not_parsed(): void

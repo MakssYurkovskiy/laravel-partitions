@@ -680,7 +680,7 @@ class QuarterlyStrategy extends AbstractStrategy
 
     public function next(DateTimeInterface $date): CarbonImmutable
     {
-        return $this->start($date)->addQuarter();
+        return $this->start($this->start($date)->addQuarter());
     }
 
     protected function format(): string
@@ -691,6 +691,11 @@ class QuarterlyStrategy extends AbstractStrategy
 
 Partition::table('transactions')->strategy(QuarterlyStrategy::class, 'created_at')->sync();
 ```
+
+`next()` goes through `start()` twice on purpose. Where a clock change skips midnight —
+`America/Santiago`, `Africa/Cairo` — that day starts at 01:00, and a period added to it has to be
+brought back to the midnight the next one starts at; otherwise a `unix_timestamp` partition ends an
+hour late.
 
 A partition name is the prefix followed by the period start in `format()`, and it is held to the
 same `[A-Za-z0-9_$]` as every other identifier: `Y_m` names `p2025_06`, while `Y-m` makes

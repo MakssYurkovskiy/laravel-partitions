@@ -22,7 +22,7 @@ class QuarterlyStrategy extends AbstractStrategy
 
     public function next(DateTimeInterface $date): CarbonImmutable
     {
-        return $this->start($date)->addQuarter();
+        return $this->start($this->start($date)->addQuarter());
     }
 
     protected function format(): string
