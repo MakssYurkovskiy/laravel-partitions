@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here.
 
+## [0.1.4] - 2026-11-12
+
+### Fixed
+
+- The limit of 8192 partitions in one table was checked against the periods of one call only, so
+  two layouts passed it and were refused by the server with error 1499 instead of a
+  `TooManyPartitionsException`. `create()`, `createStatement()`, `partitionByClause()` and a
+  migration now count the `MAXVALUE` partition they add: a range of exactly 8192 periods is refused
+  unless `withoutMaxPartition()` is set. `sync()`, `syncStatements()` and `maintain()` count the
+  partitions the table already has: when those and the ones to add come to more than 8192, the
+  exception is thrown before the first statement, in a dry run too. A `sync()` split by
+  `syncChunk()` used to apply the chunks that still fitted and fail on the next one.
+
 ## [0.1.3] - 2026-11-12
 
 Fixes from a review of 0.1.2, the first one made against real servers. Several of them turn a

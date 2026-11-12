@@ -2452,6 +2452,176 @@ REORGANIZE PARTITION `pMax` INTO (
         self::assertSame(306, substr_count($sql, 'VALUES LESS THAN ('));
     }
 
+    public function test_a_range_that_fills_the_table_leaves_no_room_for_the_max_partition(): void
+    {
+        $repository = new FakePartitionRepository;
+        $builder = $this->builder($repository)->table('transactions')->daily('created_at')->between('2010-01-01', '2032-06-05');
+
+        try {
+            $builder->create();
+
+            self::fail('8192 periods and a MAXVALUE partition were sent to the server.');
+        } catch (TooManyPartitionsException $exception) {
+            self::assertSame(
+                'The range for table [transactions], 2010-01-01 to 2032-06-05, covers 8192 periods, and with the '
+                .'MAXVALUE partition that is one more than the 8192 partitions MySQL allows in one table. Narrow the '
+                .'range, partition by a longer period, or leave the MAXVALUE partition out.',
+                $exception->getMessage()
+            );
+        }
+
+        self::assertSame([], $repository->executed);
+    }
+
+    public function test_a_dry_run_and_a_migration_refuse_the_range_that_leaves_no_room_for_the_max_partition(): void
+    {
+        $builder = $this->builder()->table('transactions')->daily('created_at')->between('2010-01-01', '2032-06-05');
+        $refused = 0;
+
+        foreach (['createStatement', 'partitionByClause'] as $method) {
+            try {
+                $builder->{$method}();
+            } catch (TooManyPartitionsException) {
+                $refused++;
+            }
+        }
+
+        try {
+            $builder->dryRun()->create();
+        } catch (TooManyPartitionsException) {
+            $refused++;
+        }
+
+        self::assertSame(3, $refused);
+    }
+
+    public function test_a_range_that_fills_the_table_together_with_the_max_partition_fits(): void
+    {
+        $sql = $this->builder()
+            ->table('transactions')
+            ->daily('created_at')
+            ->between('2010-01-01', '2032-06-04')
+            ->createStatement();
+
+        self::assertSame(8192, substr_count($sql, 'VALUES LESS THAN'));
+        self::assertSame(1, substr_count($sql, 'VALUES LESS THAN MAXVALUE'));
+    }
+
+    public function test_a_range_that_fills_the_table_fits_without_the_max_partition(): void
+    {
+        $sql = $this->builder()
+            ->table('transactions')
+            ->daily('created_at')
+            ->withoutMaxPartition()
+            ->between('2010-01-01', '2032-06-05')
+            ->createStatement();
+
+        self::assertSame(8192, substr_count($sql, 'VALUES LESS THAN'));
+    }
+
+    public function test_a_sync_that_would_outgrow_the_table_is_refused_before_the_first_chunk(): void
+    {
+        $repository = $this->dailyPartitions(8000, '2025-06-13');
+        $events = new FakeDispatcher;
+        $builder = (new PartitionBuilder($repository, $events))
+            ->table('transactions')
+            ->daily('created_at')
+            ->withoutMaxPartition()
+            ->syncChunk(100)
+            ->to('2026-10-26');
+
+        try {
+            $builder->sync();
+
+            self::fail('The first chunks were sent to the server.');
+        } catch (TooManyPartitionsException $exception) {
+            self::assertSame(
+                'Table [transactions] has 8000 partitions, and the 500 to add would make 8500 — MySQL allows 8192 in '
+                .'one table. Nothing was added. Drop the partitions that are no longer needed, with partitions:drop '
+                .'or dropBefore(), or partition by a longer period.',
+                $exception->getMessage()
+            );
+        }
+
+        self::assertSame([], $repository->executed);
+        self::assertSame([], $events->dispatched);
+    }
+
+    public function test_a_dry_run_refuses_the_sync_that_would_outgrow_the_table(): void
+    {
+        $builder = $this->builder($this->dailyPartitions(8000, '2025-06-13'))
+            ->table('transactions')
+            ->daily('created_at')
+            ->withoutMaxPartition()
+            ->to('2026-10-26');
+
+        $this->expectException(TooManyPartitionsException::class);
+
+        $builder->syncStatements();
+    }
+
+    public function test_the_max_partition_a_table_has_counts_toward_the_limit(): void
+    {
+        $fits = $this->builder($this->dailyPartitions(8190, '2025-06-13', max: true))
+            ->table('transactions')
+            ->daily('created_at')
+            ->to('2025-06-14');
+
+        self::assertCount(1, $fits->syncStatements());
+
+        $outgrows = $this->builder($this->dailyPartitions(8190, '2025-06-13', max: true))
+            ->table('transactions')
+            ->daily('created_at')
+            ->to('2025-06-15');
+
+        $this->expectException(TooManyPartitionsException::class);
+        $this->expectExceptionMessage('has 8191 partitions, and the 2 to add would make 8193');
+
+        $outgrows->syncStatements();
+    }
+
+    public function test_deferred_partitions_do_not_count_toward_the_limit(): void
+    {
+        $capped = $this->builder($this->dailyPartitions(8190, '2025-06-03'))
+            ->table('transactions')
+            ->daily('created_at')
+            ->withoutMaxPartition()
+            ->maxGaps(2)
+            ->to('2025-06-13');
+
+        self::assertCount(2, $capped->pending());
+        self::assertCount(8, $capped->deferred());
+        self::assertCount(1, $capped->syncStatements());
+
+        $uncapped = $this->builder($this->dailyPartitions(8190, '2025-06-03'))
+            ->table('transactions')
+            ->daily('created_at')
+            ->withoutMaxPartition()
+            ->maxGaps(null)
+            ->to('2025-06-13');
+
+        $this->expectException(TooManyPartitionsException::class);
+        $this->expectExceptionMessage('has 8190 partitions, and the 10 to add would make 8200');
+
+        $uncapped->syncStatements();
+    }
+
+    protected function dailyPartitions(int $count, string $last, bool $max = false): FakePartitionRepository
+    {
+        $day = CarbonImmutable::parse($last, 'UTC')->subDays($count - 1);
+        $partitions = [];
+
+        for ($index = 0; $index < $count; $index++, $day = $day->addDay()) {
+            $partitions['p'.$day->format('Ymd')] = (string) (intdiv($day->getTimestamp(), 86400) + 719529);
+        }
+
+        if ($max) {
+            $partitions['pMax'] = 'MAXVALUE';
+        }
+
+        return FakePartitionRepository::withPartitions($partitions);
+    }
+
     /**
      * @return iterable<string, array{0: string, 1: array<string, string>}>
      */
