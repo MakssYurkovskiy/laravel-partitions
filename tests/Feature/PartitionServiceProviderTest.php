@@ -137,7 +137,10 @@ class PartitionServiceProviderTest extends TestCase
         Partition::table('transactions');
 
         Event::fake();
-        $this->app->instance(PartitionRepository::class, $repository = new FakePartitionRepository);
+        $this->app->instance(PartitionRepository::class, $repository = FakePartitionRepository::withPartitions([
+            'p20250620' => '739788',
+            'pMax' => 'MAXVALUE',
+        ]));
 
         Partition::table('transactions')->daily('created_at')->between('2025-06-25', '2025-06-26')->sync();
 

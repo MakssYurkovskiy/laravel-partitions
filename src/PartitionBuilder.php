@@ -617,6 +617,7 @@ class PartitionBuilder
      */
     public function syncStatements(?PartitionPlan $plan = null): Collection
     {
+        $this->assertPartitioned();
         $this->assertMaxPartitionMatches();
 
         $pending = $this->current($plan)->pending;
@@ -686,6 +687,8 @@ class PartitionBuilder
      */
     public function sync(?PartitionPlan $plan = null): Collection
     {
+        $this->assertPartitioned();
+
         $plan = $this->current($plan);
         $statements = $this->syncStatements($plan);
 
@@ -748,6 +751,8 @@ class PartitionBuilder
      */
     public function maintain(?PartitionPlan $plan = null): array
     {
+        $this->assertPartitioned();
+
         $plan = $this->current($plan);
         $outdated = $this->outdatedAfter($plan);
 
@@ -918,6 +923,16 @@ class PartitionBuilder
                 $this->from->toDateString(),
                 $to->toDateString()
             );
+    }
+
+    /**
+     * @throws NotPartitionedException
+     */
+    protected function assertPartitioned(): void
+    {
+        if (! $this->isPartitioned()) {
+            throw NotPartitionedException::forSync($this->getTable());
+        }
     }
 
     /**

@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use Yurkovskiy\Partitions\Events\PartitionsCreated;
 use Yurkovskiy\Partitions\Events\PartitionsDropped;
 use Yurkovskiy\Partitions\Exceptions\ExpressionMismatchException;
+use Yurkovskiy\Partitions\Exceptions\NotPartitionedException;
 use Yurkovskiy\Partitions\Exceptions\StrategyMismatchException;
 use Yurkovskiy\Partitions\Exceptions\TimezoneMismatchException;
 use Yurkovskiy\Partitions\Tests\Support\IntegrationTestCase;
@@ -86,6 +87,15 @@ class LifecycleTest extends IntegrationTestCase
 
         $this->assertStringContainsString('ADD PARTITION', (string) $statements->first());
         $this->assertSame(['p20261112', 'p20261113', 'p20261114', 'p20261115'], $this->partitionsOf('transactions'));
+    }
+
+    public function test_a_plain_table_is_refused_before_the_server_refuses_it(): void
+    {
+        $this->createTable('transactions');
+
+        $this->expectException(NotPartitionedException::class);
+
+        $this->builder('transactions')->daily()->future(1)->sync();
     }
 
     public function test_reorganising_the_max_partition_moves_its_rows_into_the_new_partitions(): void

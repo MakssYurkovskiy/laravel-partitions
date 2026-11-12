@@ -176,11 +176,11 @@ the ones it would have run.
 | Method | Description |
 | --- | --- |
 | `create()` | Partition a table that is not partitioned yet. Throws when it already is. |
-| `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, stopping after `maxGaps()` skipped periods when the table skipped more. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. Partitions of the plan the table already has are left out, so a retry with the same plan after a failed statement sends only what is still missing. `syncStatements()` takes a plan the same way. |
+| `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, stopping after `maxGaps()` skipped periods when the table skipped more. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. Partitions of the plan the table already has are left out, so a retry with the same plan after a failed statement sends only what is still missing. `syncStatements()` takes a plan the same way. Throws a `NotPartitionedException` on a table that is not partitioned, in a dry run too: partitioning a table is `create()`, never a side effect of `sync()`. |
 | `prune()` | Drop what falls outside `retain()`, except the last partition with a boundary. |
 | `dropBefore($date)` | Drop everything older than the given date — its own calendar date for a date object, see [Dates you pass in](#dates-you-pass-in). |
 | `dropBetween($from, $to)` | Drop the partitions covering the range, inclusive on both ends. The bounds are normalised, so passing them the other way round selects the same partitions. |
-| `maintain(?PartitionPlan $plan = null)` | `['added' => ..., 'dropped' => ...]` — `sync($plan)` plus `prune()`. What is dropped is decided before anything is added, so a dry run lists the drops of a real run. |
+| `maintain(?PartitionPlan $plan = null)` | `['added' => ..., 'dropped' => ...]` — `sync($plan)` plus `prune()`. What is dropped is decided before anything is added, so a dry run lists the drops of a real run. Throws on a table that is not partitioned, like `sync()`. |
 | `drop($partitions)` | Drop exactly these partitions — say, the list `outdated()` or `inRange()` returned and somebody looked at. |
 | `truncate($partitions)` | Empty partitions without dropping them. |
 | `removePartitioning()` | `ALTER TABLE ... REMOVE PARTITIONING`, keeping the data. Throws when the table is not partitioned. |
@@ -676,7 +676,7 @@ whole, while a single case can be caught on its own.
 | `InvalidRangeException` | `from()` lies past the end of the range — `to()`, or today plus `future()` when `to()` is not set — so `create()`, `sync()` or a migration would cover no period |
 | `TimezoneMismatchException` | `verifyTimezone()` found the session timezone away from the configured one, on the builder or in a migration |
 | `AlreadyPartitionedException` | `create()` on a partitioned table, or `partitionByRange()` in a migration without `replacePartitioning()` |
-| `NotPartitionedException` | `removePartitioning()` on a table that is not partitioned, from the builder or from a migration |
+| `NotPartitionedException` | `removePartitioning()` on a table that is not partitioned, from the builder or from a migration; `sync()`, `syncStatements()` or `maintain()` on such a table, before any statement is built |
 | `MaxPartitionConflictException` | `sync()` with `withoutMaxPartition()` against a table that has a `MAXVALUE` partition |
 | `ExpressionMismatchException` | the table is partitioned by another expression, column or method than the builder describes |
 | `StrategyMismatchException` | the table was cut by another period than the builder's strategy — a daily table under `monthly()` — or a partition named like a period of the strategy ends somewhere else |

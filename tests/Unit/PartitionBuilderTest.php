@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Yurkovskiy\Partitions\Tests\Unit;
 
 use Carbon\CarbonImmutable;
+use Closure;
 use Illuminate\Database\Eloquent\Model;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -2217,5 +2218,38 @@ REORGANIZE PARTITION `pMax` INTO (
         self::assertInstanceOf(PartitionsCreated::class, $event);
         self::assertSame('transactions', $event->table);
         self::assertStringStartsWith("ALTER TABLE `app_transactions`\n", $event->statements[0]);
+    }
+
+    /**
+     * @return iterable<string, array{0: Closure(PartitionBuilder): mixed}>
+     */
+    public static function operationsThatNeedAPartitionedTable(): iterable
+    {
+        yield 'sync()' => [fn (PartitionBuilder $builder) => $builder->sync()];
+        yield 'syncStatements()' => [fn (PartitionBuilder $builder) => $builder->syncStatements()];
+        yield 'maintain()' => [fn (PartitionBuilder $builder) => $builder->maintain()];
+        yield 'sync() in a dry run' => [fn (PartitionBuilder $builder) => $builder->dryRun()->sync()];
+        yield 'maintain() in a dry run' => [fn (PartitionBuilder $builder) => $builder->dryRun()->maintain()];
+    }
+
+    #[DataProvider('operationsThatNeedAPartitionedTable')]
+    public function test_a_table_that_is_not_partitioned_is_not_sent_add_partition(Closure $operation): void
+    {
+        $repository = new FakePartitionRepository;
+        $builder = $this->builder($repository)->table('transactions')->daily('created_at')->retain(3);
+
+        try {
+            $operation($builder);
+
+            self::fail('The table was treated as a partitioned one.');
+        } catch (NotPartitionedException $exception) {
+            self::assertSame(
+                'Table [transactions] is not partitioned, so sync() has no partitions to add to. Call create() — or '
+                .'run partitions:add with --create — to partition it first; that rebuilds the whole table.',
+                $exception->getMessage()
+            );
+        }
+
+        self::assertSame([], $repository->executed);
     }
 }
