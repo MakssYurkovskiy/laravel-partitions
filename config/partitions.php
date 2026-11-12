@@ -88,7 +88,8 @@ return [
     |   'column'           Date column the partitioning key is built from.
     |   'expression'       to_days | columns | unix_timestamp, read the same way
     |                      as 'strategy'.
-    |   'timezone'         Reference frame for unix_timestamp boundaries.
+    |   'timezone'         Reference frame for unix_timestamp boundaries (null =
+    |                      the one above, false = connection, then app timezone).
     |   'verify_timezone'  Check the session timezone before DDL.
     |   'future'           Periods pre-created ahead of today.
     |   'retain'           Complete periods kept before the current one, which

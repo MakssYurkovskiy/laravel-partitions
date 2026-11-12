@@ -16,7 +16,7 @@ use Yurkovskiy\Partitions\Schema\PartitionPeriod;
 
 class PartitionManager
 {
-    protected const NULLABLE = ['connection', 'tablespace', 'timezone', 'retain', 'chunk', 'sync_chunk', 'max_gaps'];
+    protected const NULLABLE = ['retain', 'chunk', 'sync_chunk', 'max_gaps'];
 
     /**
      * @param  array<string, mixed>  $config
@@ -167,7 +167,7 @@ class PartitionManager
         }
 
         if (array_key_exists('tablespace', $settings)) {
-            $builder->tablespace($this->nullableString($settings['tablespace']));
+            $builder->tablespace($this->unlessOff($settings['tablespace']));
         }
 
         if (array_key_exists('expression', $settings)) {
@@ -191,7 +191,7 @@ class PartitionManager
         }
 
         if (array_key_exists('timezone', $settings)) {
-            $builder->timezone($this->nullableString($settings['timezone']));
+            $builder->timezone($this->unlessOff($settings['timezone']));
         }
 
         if (array_key_exists('verify_timezone', $settings)) {
@@ -223,6 +223,11 @@ class PartitionManager
     protected function nullableString(mixed $value): ?string
     {
         return $value === null ? null : (string) $value;
+    }
+
+    protected function unlessOff(mixed $value): ?string
+    {
+        return $value === false ? null : (string) $value;
     }
 
     protected function nullableInt(mixed $value): ?int
