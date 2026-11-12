@@ -4,6 +4,14 @@ All notable changes to this package are documented here.
 
 ## [1.0.0] - 2026-11-12
 
+### Changed
+
+- The reference part of the README moved to `docs/`: builder, timezones, commands, configuration,
+  migrations, events and errors, custom strategies, the MySQL mapping, the migration guide from
+  `app/Services/Partition` and the tests each have a page there. The README keeps the install, the
+  quick start, the commands at a glance and a list of those pages. `docs/` is left out of the
+  Composer archive.
+
 ### Fixed
 
 - The limit of 8192 partitions in one table was checked against the periods of one call only, so
