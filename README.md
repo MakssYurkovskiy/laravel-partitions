@@ -657,6 +657,7 @@ whole, while a single case can be caught on its own.
 | `MissingDefinitionException` | the `partitionBy` blueprint command lost its `PartitionDefinition` |
 | `InvalidIdentifierException` | a table, column, partition or tablespace name is outside `[A-Za-z0-9_$]` |
 | `InvalidTimezoneException` | `timezone()` got an identifier PHP does not know |
+| `InvalidDateException` | a date given as a string is blank or is not one PHP can read — `from()`, `to()`, `between()`, `has()`, `partitionNameFor()`, `inRange()`, `outdated()`, `dropBefore()`, `dropBetween()`, the same methods in a migration, and the `--from`, `--to` and `--before` options; Carbon's own exception is kept as `getPrevious()` |
 | `InvalidRangeException` | `from()` lies past the end of the range — `to()`, or today plus `future()` when `to()` is not set — so `create()`, `sync()` or a migration would cover no period |
 | `TimezoneMismatchException` | `verifyTimezone()` found the session timezone away from the configured one, on the builder or in a migration |
 | `AlreadyPartitionedException` | `create()` on a partitioned table, or `partitionByRange()` in a migration without `replacePartitioning()` |

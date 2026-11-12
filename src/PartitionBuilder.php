@@ -20,6 +20,7 @@ use Yurkovskiy\Partitions\Events\PartitionsDropped;
 use Yurkovskiy\Partitions\Events\PartitionsTruncated;
 use Yurkovskiy\Partitions\Exceptions\AlreadyPartitionedException;
 use Yurkovskiy\Partitions\Exceptions\ExpressionMismatchException;
+use Yurkovskiy\Partitions\Exceptions\InvalidDateException;
 use Yurkovskiy\Partitions\Exceptions\InvalidRangeException;
 use Yurkovskiy\Partitions\Exceptions\InvalidTimezoneException;
 use Yurkovskiy\Partitions\Exceptions\MaxPartitionConflictException;
@@ -258,6 +259,9 @@ class PartitionBuilder
         return $this;
     }
 
+    /**
+     * @throws InvalidDateException
+     */
     public function from(DateTimeInterface|string $date): static
     {
         $this->from = $this->toDate($date);
@@ -265,6 +269,9 @@ class PartitionBuilder
         return $this;
     }
 
+    /**
+     * @throws InvalidDateException
+     */
     public function to(DateTimeInterface|string $date): static
     {
         $this->to = $this->toDate($date);
@@ -272,6 +279,9 @@ class PartitionBuilder
         return $this;
     }
 
+    /**
+     * @throws InvalidDateException
+     */
     public function between(DateTimeInterface|string $from, DateTimeInterface|string $to): static
     {
         return $this->from($from)->to($to);
@@ -413,11 +423,17 @@ class PartitionBuilder
         return $this->existing()->contains(fn (PartitionInfo $partition) => $partition->isMax());
     }
 
+    /**
+     * @throws InvalidDateException
+     */
     public function partitionNameFor(DateTimeInterface|string $date): string
     {
         return $this->getStrategy()->partitionName($this->toDate($date));
     }
 
+    /**
+     * @throws InvalidDateException
+     */
     public function has(DateTimeInterface|string $date): bool
     {
         return $this->existingNames()->contains($this->partitionNameFor($date));
@@ -1295,13 +1311,24 @@ class PartitionBuilder
         return CarbonImmutable::now();
     }
 
+    /**
+     * @throws InvalidDateException
+     */
     protected function toDate(DateTimeInterface|string $date): CarbonImmutable
     {
-        $date = $date instanceof DateTimeInterface
-            ? CarbonImmutable::instance($date)
-            : CarbonImmutable::parse($date);
+        if ($date instanceof DateTimeInterface) {
+            return CarbonImmutable::instance($date)->shiftTimezone(date_default_timezone_get());
+        }
 
-        return $date->shiftTimezone(date_default_timezone_get());
+        if (trim($date) === '') {
+            throw new InvalidDateException($date);
+        }
+
+        try {
+            return CarbonImmutable::parse($date)->shiftTimezone(date_default_timezone_get());
+        } catch (Throwable $e) {
+            throw new InvalidDateException($date, $e);
+        }
     }
 
     /**
