@@ -1158,12 +1158,12 @@ class PartitionBuilder
      */
     protected function run(Collection $statements, ?Collection $writing = null): void
     {
-        if ($this->dryRun) {
-            return;
-        }
-
         if ($this->verifiesTimezone()) {
             $this->assertSessionReads($writing ?? collect());
+        }
+
+        if ($this->dryRun) {
+            return;
         }
 
         try {
