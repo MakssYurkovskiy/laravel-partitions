@@ -1,0 +1,38 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release notes from the CHANGELOG
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cut the section of this version out of the CHANGELOG
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          awk -v version="${TAG#v}" -f .github/release-notes.awk CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "::error::CHANGELOG.md has no section for ${TAG#v}"
+            exit 1
+          fi
+
+      - name: Create the release or update its notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
