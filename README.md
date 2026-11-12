@@ -189,7 +189,7 @@ produced by the current strategy — a hand made `p_legacy` partition is left al
 `truncate()` are the exception: they take the list they are given as it is.
 
 If the table turns out to be partitioned differently than the builder describes — another expression,
-another column, `LIST`/`HASH` instead of `RANGE` — the operation throws instead of silently finding
+another column, `LIST`/`HASH`/`KEY` instead of `RANGE` — the operation throws instead of silently finding
 nothing to do:
 
 ```

@@ -1234,6 +1234,71 @@ class PartitionBuilderTest extends TestCase
         }
     }
 
+    public function test_the_guard_refuses_a_table_partitioned_by_key_with_no_expression(): void
+    {
+        $repository = FakePartitionRepository::withPartitions(['p0' => null, 'p1' => null], method: 'KEY');
+
+        $builder = $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->retain(2);
+
+        $this->expectException(ExpressionMismatchException::class);
+        $this->expectExceptionMessage(
+            'Table [transactions] is partitioned by [KEY] '
+            .'but the builder is configured for [RANGE (to_days(created_at))]'
+        );
+
+        try {
+            $builder->sync();
+        } finally {
+            $this->assertSame([], $repository->executed);
+        }
+    }
+
+    public function test_the_guard_refuses_every_method_other_than_range_on_every_path(): void
+    {
+        $tables = [
+            'KEY' => null,
+            'LINEAR KEY' => '',
+            'HASH' => 'to_days(`created_at`)',
+            'LINEAR HASH' => 'to_days(`created_at`)',
+            'LIST' => 'to_days(`created_at`)',
+            'RANGE COLUMNS' => null,
+        ];
+
+        $paths = [
+            'sync' => fn (PartitionBuilder $builder) => $builder->sync(),
+            'prune' => fn (PartitionBuilder $builder) => $builder->prune(),
+            'maintain' => fn (PartitionBuilder $builder) => $builder->maintain(),
+            'dropBefore' => fn (PartitionBuilder $builder) => $builder->dropBefore('2025-06-11'),
+            'dropBetween' => fn (PartitionBuilder $builder) => $builder->dropBetween('2025-06-01', '2025-06-30'),
+        ];
+
+        foreach ($tables as $method => $expression) {
+            foreach ($paths as $name => $path) {
+                $repository = FakePartitionRepository::withPartitions(
+                    ['p0' => null, 'p1' => null],
+                    method: $method,
+                    expression: $expression,
+                );
+
+                $builder = $this->builder($repository)
+                    ->table('transactions')
+                    ->daily('created_at')
+                    ->retain(2);
+
+                try {
+                    $path($builder);
+                    $this->fail("Expected $name to refuse a $method table.");
+                } catch (ExpressionMismatchException $exception) {
+                    $this->assertStringContainsString("is partitioned by [$method", $exception->getMessage());
+                    $this->assertSame([], $repository->executed);
+                }
+            }
+        }
+    }
+
     public function test_the_guard_lets_a_matching_table_through_on_the_destructive_paths(): void
     {
         $repository = FakePartitionRepository::withPartitions(

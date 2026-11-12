@@ -939,23 +939,28 @@ class PartitionBuilder
      */
     protected function assertMatchesExisting(Collection $existing): void
     {
-        $partition = $existing->first(fn (PartitionInfo $info) => $info->expression !== null && $info->expression !== '');
+        $partition = $existing->first(
+            fn (PartitionInfo $info) => trim((string) $info->expression) !== '' || trim((string) $info->method) !== ''
+        );
 
-        if ($partition === null || $partition->expression === null) {
+        if ($partition === null) {
             return;
         }
 
-        $found = PartitionExpression::normalize($partition->expression);
+        $found = PartitionExpression::normalize((string) $partition->expression);
         $expected = $this->expression->normalized($this->column);
         $method = strtoupper(trim((string) $partition->method));
 
-        if ($found === $expected && ($method === '' || $method === $this->expression->method())) {
+        $methodMatches = $method === '' || $method === $this->expression->method();
+        $expressionMatches = $found === '' || $found === $expected;
+
+        if ($methodMatches && $expressionMatches) {
             return;
         }
 
         throw new ExpressionMismatchException(
             $this->getTable(),
-            trim($method.' ('.$found.')'),
+            trim($method.($found === '' ? '' : ' ('.$found.')')),
             $this->expression->method().' ('.$expected.')'
         );
     }
