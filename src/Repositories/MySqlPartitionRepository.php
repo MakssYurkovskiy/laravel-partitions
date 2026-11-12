@@ -93,7 +93,7 @@ class MySqlPartitionRepository implements PartitionRepository
 
         $epochs = [];
 
-        foreach ($this->connection($connection)->select($sql, $datetimes) as $row) {
+        foreach ($this->connection($connection)->select($sql, $datetimes, false) as $row) {
             $row = (array) $row;
             $datetime = $datetimes[(int) ($row['position'] ?? -1)] ?? null;
 
@@ -115,7 +115,7 @@ class MySqlPartitionRepository implements PartitionRepository
      */
     protected function informationSchema(ConnectionInterface $db, string $view): Builder
     {
-        return (new Builder($db))->from(new Expression('`information_schema`.`'.$view.'`'));
+        return (new Builder($db))->useWritePdo()->from(new Expression('`information_schema`.`'.$view.'`'));
     }
 
     /**

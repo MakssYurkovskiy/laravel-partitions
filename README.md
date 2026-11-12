@@ -742,6 +742,10 @@ way `WeeklyStrategy` does.
 - Every read and every statement checks the driver of the connection first: a non-MySQL connection
   throws an `UnsupportedDriverException` naming it, instead of sending an
   `information_schema.PARTITIONS` query no other server has. MariaDB counts as MySQL.
+- Every read goes to the write connection. On a connection split into `read` and `write` hosts the
+  partition list, the table lookup and the timezone probe are asked of the primary, the server the
+  DDL runs on, with or without `sticky`: a replica that lags would otherwise report partitions that
+  are already there as missing, or a partitioned table as a plain one.
 
 ## Coming from `app/Services/Partition`
 
