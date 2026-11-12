@@ -33,7 +33,7 @@ class WeeklyStrategy extends AbstractStrategy
         $year = (int) substr($stamp, 0, 4);
         $week = (int) substr($stamp, 4);
 
-        $date = CarbonImmutable::create($year, 1, 4);
+        $date = CarbonImmutable::create($year, 1, 4, 0, 0, 0, 'UTC');
 
         if (! $date instanceof CarbonImmutable) {
             return null;

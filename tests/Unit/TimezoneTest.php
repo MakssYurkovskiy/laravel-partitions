@@ -150,6 +150,51 @@ class TimezoneTest extends TestCase
         $this->assertSame('1788750000', $missing->get(1)->boundary);
     }
 
+    public function test_a_midnight_the_application_timezone_skips_stays_midnight_in_the_boundary_timezone(): void
+    {
+        date_default_timezone_set('America/Santiago');
+        CarbonImmutable::setTestNow('2026-09-05 12:00:00');
+
+        $missing = $this->builder()->timezone('UTC')->future(2)->missing();
+
+        $this->assertSame(['p20260905', 'p20260906', 'p20260907'], $missing->pluck('name')->all());
+        $this->assertSame(
+            [$this->utcMidnight('2026-09-06'), $this->utcMidnight('2026-09-07'), $this->utcMidnight('2026-09-08')],
+            $missing->pluck('boundary')->all()
+        );
+    }
+
+    public function test_a_date_given_on_the_day_whose_midnight_is_skipped_keeps_whole_days(): void
+    {
+        date_default_timezone_set('America/Santiago');
+        CarbonImmutable::setTestNow('2026-09-01 12:00:00');
+
+        $missing = $this->builder()->timezone('UTC')->between('2026-09-06', '2026-09-06')->missing();
+
+        $this->assertSame(['p20260906'], $missing->pluck('name')->all());
+        $this->assertSame('2026-09-06 00:00:00', $missing->first()->start->format('Y-m-d H:i:s'));
+        $this->assertSame([$this->utcMidnight('2026-09-07')], $missing->pluck('boundary')->all());
+    }
+
+    public function test_partitions_read_back_across_a_skipped_midnight_continue_without_a_shift(): void
+    {
+        date_default_timezone_set('America/Santiago');
+        CarbonImmutable::setTestNow('2026-09-05 12:00:00');
+
+        $repository = $this->repository([
+            'p20260905' => $this->utcMidnight('2026-09-06'),
+            'pMax' => 'MAXVALUE',
+        ]);
+
+        $missing = $this->builder($repository)->timezone('UTC')->future(2)->missing();
+
+        $this->assertSame(['p20260906', 'p20260907'], $missing->pluck('name')->all());
+        $this->assertSame(
+            [$this->utcMidnight('2026-09-07'), $this->utcMidnight('2026-09-08')],
+            $missing->pluck('boundary')->all()
+        );
+    }
+
     /**
      * @return iterable<string, array{0: string, 1: string, 2: string, 3: string, 4: list<string>}>
      */
@@ -528,6 +573,29 @@ class TimezoneTest extends TestCase
         $this->assertCount(1, $statements);
         $this->assertSame([], $repository->timestampQueries);
         $this->assertSame([], $repository->executed);
+    }
+
+    public function test_retention_keeps_the_day_whose_midnight_the_application_timezone_skips(): void
+    {
+        date_default_timezone_set('America/Santiago');
+        CarbonImmutable::setTestNow('2026-09-08 12:00:00');
+
+        $repository = $this->repository([
+            'p20260905' => $this->utcMidnight('2026-09-06'),
+            'p20260906' => $this->utcMidnight('2026-09-07'),
+            'p20260907' => $this->utcMidnight('2026-09-08'),
+            'p20260908' => $this->utcMidnight('2026-09-09'),
+            'pMax' => 'MAXVALUE',
+        ]);
+
+        $outdated = $this->builder($repository)->timezone('UTC')->retain(2)->outdated();
+
+        $this->assertSame(['p20260905'], $outdated->pluck('name')->all());
+    }
+
+    private function utcMidnight(string $date): string
+    {
+        return (string) (new DateTimeImmutable("$date 00:00:00", new DateTimeZone('UTC')))->getTimestamp();
     }
 
     private function pinNow(string $applicationTimezone): void
