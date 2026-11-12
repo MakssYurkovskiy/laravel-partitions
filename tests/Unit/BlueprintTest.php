@@ -22,6 +22,7 @@ use Yurkovskiy\Partitions\Exceptions\UnsupportedGrammarException;
 use Yurkovskiy\Partitions\PartitionManager;
 use Yurkovskiy\Partitions\Schema\PartitionMacros;
 use Yurkovskiy\Partitions\Schema\PartitionPeriod;
+use Yurkovskiy\Partitions\Tests\Support\ArchiveEvent;
 use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
 use Yurkovskiy\Partitions\Tests\Support\QuarterlyStrategy;
 
@@ -456,6 +457,129 @@ class BlueprintTest extends TestCase
         });
 
         $this->assertSame([], $this->repository->timestampQueries);
+    }
+
+    public function test_a_configured_table_brings_its_timezone_into_the_migration(): void
+    {
+        $this->bind($this->repository, [
+            'timezone' => 'UTC',
+            'tables' => ['transactions' => ['expression' => 'unix_timestamp', 'timezone' => 'Europe/Kyiv']],
+        ]);
+
+        $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
+            $table->partitionByRange('created_at')->daily()->between('2025-06-13', '2025-06-14');
+        });
+
+        $configured = PartitionMacros::manager()->for('transactions')->between('2025-06-13', '2025-06-14');
+
+        $this->assertStringContainsString('PARTITION `p20250613` VALUES LESS THAN (1749848400)', $statements[0]);
+        $this->assertStringEndsWith($configured->partitionByClause(), $statements[0]);
+    }
+
+    public function test_a_configured_table_is_found_by_its_table_setting(): void
+    {
+        $this->bind($this->repository, ['tables' => [
+            'payments' => ['table' => 'transactions', 'strategy' => 'monthly', 'prefix' => 'txn', 'future' => 1],
+        ]]);
+
+        $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
+            $table->partitionByRange('booked_at');
+        });
+
+        $this->assertSame(<<<'SQL'
+            ALTER TABLE `transactions`
+            PARTITION BY RANGE (TO_DAYS(`booked_at`)) (
+                PARTITION `txn202506` VALUES LESS THAN (739798),
+                PARTITION `txn202507` VALUES LESS THAN (739829),
+                PARTITION `pMax` VALUES LESS THAN MAXVALUE
+            )
+            SQL, $statements[0]);
+    }
+
+    public function test_the_migration_overrides_what_the_configured_table_sets(): void
+    {
+        $this->bind($this->repository, ['tables' => [
+            'transactions' => ['strategy' => 'monthly', 'expression' => 'unix_timestamp', 'timezone' => 'Europe/Kyiv'],
+        ]]);
+
+        $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
+            $table->partitionByRange('created_at')->daily()->timezone('UTC')->between('2025-06-13', '2025-06-13');
+        });
+
+        $this->assertStringContainsString('PARTITION `p20250613` VALUES LESS THAN (1749859200)', $statements[0]);
+    }
+
+    public function test_a_table_configured_on_another_connection_is_left_out(): void
+    {
+        $this->bind($this->repository, ['tables' => [
+            'events' => ['table' => ArchiveEvent::class, 'prefix' => 'archived'],
+            'transactions' => ['connection' => 'reports', 'prefix' => 'reported'],
+        ]]);
+
+        foreach (['events', 'transactions'] as $name) {
+            $statements = $this->compile($this->connection(), $name, function (Blueprint $table) {
+                $table->partitionByRange('created_at')->daily()->between('2025-06-13', '2025-06-13');
+            });
+
+            $this->assertStringContainsString('PARTITION `p20250613`', $statements[0]);
+        }
+    }
+
+    public function test_a_table_configured_on_the_connection_of_the_migration_is_used(): void
+    {
+        $this->bind($this->repository, ['tables' => [
+            'reported' => ['table' => 'transactions', 'connection' => 'reports', 'prefix' => 'reported'],
+            'transactions' => ['connection' => 'mysql', 'prefix' => 'txn'],
+        ]]);
+
+        $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
+            $table->partitionByRange('created_at')->between('2025-06-13', '2025-06-13');
+        });
+
+        $this->assertStringContainsString('PARTITION `txn20250613`', $statements[0]);
+    }
+
+    public function test_the_timezone_check_of_a_configured_table_runs_in_the_migration(): void
+    {
+        $this->repository->unixTimestamp = CarbonImmutable::now()->getTimestamp() + 3600;
+
+        $this->bind($this->repository, ['tables' => [
+            'transactions' => ['expression' => 'unix_timestamp', 'timezone' => 'UTC', 'verify_timezone' => true],
+        ]]);
+
+        $this->expectException(TimezoneMismatchException::class);
+
+        $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
+            $table->partitionByRange('created_at')->daily()->between('2025-06-13', '2025-06-14');
+        });
+    }
+
+    public function test_the_timezone_check_can_be_declared_in_the_migration(): void
+    {
+        $this->repository->unixTimestamp = CarbonImmutable::now()->getTimestamp() + 3600;
+
+        try {
+            $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
+                $table->partitionByRange('created_at')
+                    ->daily()
+                    ->usingUnixTimestamp()
+                    ->timezone('UTC')
+                    ->verifyTimezone()
+                    ->between('2025-06-13', '2025-06-14');
+            });
+
+            $this->fail('A session timezone one hour away was accepted.');
+        } catch (TimezoneMismatchException $exception) {
+            $this->assertStringContainsString('+60 minutes away', $exception->getMessage());
+        }
+
+        $this->bindVerifyingTimezone(CarbonImmutable::now()->getTimestamp() + 3600);
+
+        $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
+            $table->partitionByRange('created_at')->daily()->verifyTimezone(false)->between('2025-06-13', '2025-06-14');
+        });
+
+        $this->assertStringContainsString('UNIX_TIMESTAMP(`created_at`)', $statements[0]);
     }
 
     public function test_it_refuses_to_compile_on_a_non_mysql_connection(): void

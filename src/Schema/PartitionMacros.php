@@ -24,9 +24,7 @@ final class PartitionMacros
                 /** @var Blueprint $this */
                 $definition = new PartitionDefinition(
                     PartitionMacros::manager()
-                        ->newBuilder()
-                        ->connection($this->connection->getName())
-                        ->table($this->getTable())
+                        ->forTable($this->getTable(), $this->connection->getName())
                         ->column($column)
                 );
 

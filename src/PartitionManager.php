@@ -90,6 +90,26 @@ class PartitionManager
         return $this->fromArray($key, $settings);
     }
 
+    /**
+     * @throws UnknownStrategyException
+     */
+    public function forTable(string $table, ?string $connection = null): PartitionBuilder
+    {
+        foreach ($this->tables() as $key => $settings) {
+            if (! is_array($settings) || $this->tableName((string) $key, $settings) !== $table) {
+                continue;
+            }
+
+            $builder = $this->fromArray((string) $key, $settings);
+
+            if (in_array($builder->getConnection(), [null, $connection], true)) {
+                return $builder->connection($connection)->table($table);
+            }
+        }
+
+        return $this->newBuilder()->connection($connection)->table($table);
+    }
+
     public function isConfigured(string $key): bool
     {
         return is_array($this->tables()[$key] ?? null);
@@ -218,6 +238,20 @@ class PartitionManager
                 && ($value !== null || in_array($key, self::NULLABLE, true)),
             ARRAY_FILTER_USE_BOTH
         );
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $settings
+     */
+    protected function tableName(string $key, array $settings): string
+    {
+        $table = $this->given($settings)['table'] ?? $key;
+
+        if (is_string($table) && is_subclass_of($table, Model::class)) {
+            $table = new $table;
+        }
+
+        return $table instanceof Model ? $table->getTable() : (string) $table;
     }
 
     protected function nullableString(mixed $value): ?string
