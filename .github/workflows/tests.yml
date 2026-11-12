@@ -117,3 +117,62 @@ jobs:
 
       - name: Run the static analysis
         run: vendor/bin/phpstan analyse --no-progress --memory-limit=512M
+
+  integration:
+    name: ${{ matrix.database.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        database:
+          - { name: MySQL 8.0, image: 'mysql:8.0', driver: mysql }
+          - { name: MySQL 8.4, image: 'mysql:8.4', driver: mysql }
+          - { name: MariaDB 11.4, image: 'mariadb:11.4', driver: mariadb }
+
+    services:
+      database:
+        image: ${{ matrix.database.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: partitions_test
+        ports:
+          - 3306:3306
+
+    env:
+      PARTITIONS_DB_HOST: 127.0.0.1
+      PARTITIONS_DB_PORT: 3306
+      PARTITIONS_DB_DRIVER: ${{ matrix.database.driver }}
+      PARTITIONS_DB_DATABASE: partitions_test
+      PARTITIONS_DB_USERNAME: root
+      PARTITIONS_DB_PASSWORD: secret
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: pdo_mysql
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Wait for the server
+        run: |
+          for attempt in $(seq 1 30); do
+            if php -r 'new PDO("mysql:host=127.0.0.1;port=3306;dbname=partitions_test", "root", "secret");' 2> /dev/null; then
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "::error::${{ matrix.database.name }} did not come up"
+          exit 1
+
+      - name: Run the suite against ${{ matrix.database.name }}
+        run: vendor/bin/phpunit --testsuite Integration --fail-on-skipped
