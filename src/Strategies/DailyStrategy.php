@@ -16,7 +16,7 @@ class DailyStrategy extends AbstractStrategy
 
     public function next(DateTimeInterface $date): CarbonImmutable
     {
-        return $this->start($date)->addDay();
+        return $this->start($this->start($date)->addDay());
     }
 
     protected function format(): string

@@ -16,7 +16,7 @@ class WeeklyStrategy extends AbstractStrategy
 
     public function next(DateTimeInterface $date): CarbonImmutable
     {
-        return $this->start($date)->addWeek();
+        return $this->start($this->start($date)->addWeek());
     }
 
     protected function format(): string

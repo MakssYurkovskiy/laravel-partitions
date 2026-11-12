@@ -16,7 +16,7 @@ class MonthlyStrategy extends AbstractStrategy
 
     public function next(DateTimeInterface $date): CarbonImmutable
     {
-        return $this->start($date)->addMonth();
+        return $this->start($this->start($date)->addMonth());
     }
 
     protected function format(): string

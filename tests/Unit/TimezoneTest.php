@@ -130,6 +130,26 @@ class TimezoneTest extends TestCase
         $this->assertSame(86400, (int) $missing->first()->boundary - 1749848400);
     }
 
+    public function test_a_day_whose_midnight_dst_skips_ends_at_the_next_midnight(): void
+    {
+        date_default_timezone_set('America/Santiago');
+        CarbonImmutable::setTestNow('2026-09-05 12:00:00');
+
+        $missing = $this->builder()->timezone('America/Santiago')->future(2)->missing();
+
+        $midnight = fn (string $date): string => (string) (new DateTimeImmutable(
+            "$date 00:00:00",
+            new DateTimeZone('America/Santiago')
+        ))->getTimestamp();
+
+        $this->assertSame(['p20260905', 'p20260906', 'p20260907'], $missing->pluck('name')->all());
+        $this->assertSame(
+            [$midnight('2026-09-06'), $midnight('2026-09-07'), $midnight('2026-09-08')],
+            $missing->pluck('boundary')->all()
+        );
+        $this->assertSame('1788750000', $missing->get(1)->boundary);
+    }
+
     /**
      * @return iterable<string, array{0: string, 1: string, 2: string, 3: string, 4: list<string>}>
      */
