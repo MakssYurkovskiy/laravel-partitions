@@ -1,0 +1,51 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Foundation\Application as Laravel;
+use Orchestra\Testbench\Foundation\Application;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Console\Output\ConsoleOutput;
+use Yurkovskiy\Partitions\PartitionServiceProvider;
+
+use function Orchestra\Testbench\default_skeleton_path;
+
+require __DIR__.'/../vendor/autoload.php';
+
+$app = Application::create(
+    basePath: default_skeleton_path(),
+    resolvingCallback: function (Laravel $app): void {
+        $app->booting(function (Laravel $app): void {
+            $app['config']->set('database.default', 'mysql');
+            $app['config']->set('database.connections.mysql', [
+                'driver' => 'mysql',
+                'host' => getenv('DB_HOST') ?: '127.0.0.1',
+                'port' => (int) (getenv('DB_PORT') ?: 3306),
+                'database' => getenv('DB_DATABASE') ?: 'app',
+                'username' => getenv('DB_USERNAME') ?: 'root',
+                'password' => getenv('DB_PASSWORD') ?: '',
+                'charset' => 'utf8mb4',
+                'collation' => 'utf8mb4_unicode_ci',
+                'prefix' => '',
+                'strict' => true,
+            ]);
+            $app['config']->set('partitions.tables', [
+                'transactions' => [
+                    'strategy' => 'daily',
+                    'column' => 'created_at',
+                    'future' => 7,
+                    'retain' => 90,
+                ],
+            ]);
+        });
+    },
+    options: ['extra' => ['providers' => [PartitionServiceProvider::class]]],
+);
+
+$kernel = $app->make(Kernel::class);
+$status = $kernel->handle($input = new ArgvInput, new ConsoleOutput);
+$kernel->terminate($input, $status);
+
+exit($status);
