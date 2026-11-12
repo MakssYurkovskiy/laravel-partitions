@@ -19,6 +19,7 @@ use Yurkovskiy\Partitions\Events\PartitionsCreated;
 use Yurkovskiy\Partitions\Events\PartitionsDropped;
 use Yurkovskiy\Partitions\Events\PartitionsTruncated;
 use Yurkovskiy\Partitions\Exceptions\AlreadyPartitionedException;
+use Yurkovskiy\Partitions\Exceptions\DropsEveryPartitionException;
 use Yurkovskiy\Partitions\Exceptions\ExpressionMismatchException;
 use Yurkovskiy\Partitions\Exceptions\InvalidDateException;
 use Yurkovskiy\Partitions\Exceptions\InvalidRangeException;
@@ -643,10 +644,29 @@ class PartitionBuilder
 
     /**
      * @param  Collection<int, PartitionInfo>|array<int, PartitionInfo>  $partitions
+     *
+     * @throws DropsEveryPartitionException
+     */
+    public function assertDroppable(Collection|array $partitions): void
+    {
+        $names = collect($partitions)->map(fn (PartitionInfo $partition) => $partition->name);
+        $existing = $this->existingNames();
+
+        if ($existing->isNotEmpty() && $existing->diff($names)->isEmpty()) {
+            throw new DropsEveryPartitionException($this->getTable(), $existing->count());
+        }
+    }
+
+    /**
+     * @param  Collection<int, PartitionInfo>|array<int, PartitionInfo>  $partitions
      * @return Collection<int, string>
+     *
+     * @throws DropsEveryPartitionException
      */
     public function dropStatements(Collection|array $partitions): Collection
     {
+        $this->assertDroppable($partitions);
+
         $names = collect($partitions)->map(fn (PartitionInfo $partition) => $partition->name);
 
         return $names->chunk($this->chunk ?? $names->count())
@@ -819,6 +839,8 @@ class PartitionBuilder
     /**
      * @param  Collection<int, PartitionInfo>|array<int, PartitionInfo>  $partitions
      * @return Collection<int, string>
+     *
+     * @throws DropsEveryPartitionException
      */
     public function drop(Collection|array $partitions): Collection
     {

@@ -181,7 +181,7 @@ the ones it would have run.
 | `dropBefore($date)` | Drop everything older than the given date — its own calendar date for a date object, see [Dates you pass in](#dates-you-pass-in). |
 | `dropBetween($from, $to)` | Drop the partitions covering the range, inclusive on both ends. The bounds are normalised, so passing them the other way round selects the same partitions. |
 | `maintain(?PartitionPlan $plan = null)` | `['added' => ..., 'dropped' => ...]` — `sync($plan)` plus `prune()`. What is dropped is decided before anything is added, so a dry run lists the drops of a real run. Throws on a table that is not partitioned, like `sync()`. |
-| `drop($partitions)` | Drop exactly these partitions — say, the list `outdated()` or `inRange()` returned and somebody looked at. |
+| `drop($partitions)` | Drop exactly these partitions — say, the list `outdated()` or `inRange()` returned and somebody looked at. A selection that covers every partition of the table throws a `DropsEveryPartitionException` before the first statement — MySQL keeps at least one — and that goes for `dropBefore()` and `dropBetween()` too, which can only reach that far on a table without a `MAXVALUE` partition. |
 | `truncate($partitions)` | Empty partitions without dropping them. |
 | `removePartitioning()` | `ALTER TABLE ... REMOVE PARTITIONING`, keeping the data. Throws when the table is not partitioned. |
 
@@ -390,7 +390,9 @@ statement, one rewrite), or by moving the data out, rebuilding with `create()` a
 delete, and asks for confirmation too. Its `--from`/`--to` pair is inclusive and order-insensitive:
 swapped bounds select the same partitions rather than an empty range. The pair goes together: either
 one alone stops the command before anything is selected, in a dry run and on an unpartitioned table
-too. The command does not pick the missing end — an end of "now" would take the partition rows are
+too. A selection that takes every partition of the table — possible only without a `MAXVALUE`
+partition — stops the command before the list is printed: MySQL refuses to drop the last partition,
+so the run would end half done. The command does not pick the missing end — an end of "now" would take the partition rows are
 being written to, and a start of "the first partition" would take the whole history. What gets
 dropped is the list it printed: a confirmation answered after midnight does not widen `--retain` or a
 relative `--before` by the day that has just begun. Both confirmations are skipped by `--force`, by
@@ -678,6 +680,7 @@ whole, while a single case can be caught on its own.
 | `AlreadyPartitionedException` | `create()` on a partitioned table, or `partitionByRange()` in a migration without `replacePartitioning()` |
 | `NotPartitionedException` | `removePartitioning()` on a table that is not partitioned, from the builder or from a migration; `sync()`, `syncStatements()` or `maintain()` on such a table, before any statement is built |
 | `MaxPartitionConflictException` | `sync()` with `withoutMaxPartition()` against a table that has a `MAXVALUE` partition |
+| `DropsEveryPartitionException` | `drop()`, `dropBefore()`, `dropBetween()`, `dropStatements()` or `partitions:drop` selected every partition the table has; nothing is dropped, in a dry run and with any `chunk()` alike |
 | `ExpressionMismatchException` | the table is partitioned by another expression, column or method than the builder describes |
 | `StrategyMismatchException` | the table was cut by another period than the builder's strategy — a daily table under `monthly()` — or a partition named like a period of the strategy ends somewhere else |
 | `UnsupportedGrammarException` | a blueprint command compiles on a non-MySQL grammar |

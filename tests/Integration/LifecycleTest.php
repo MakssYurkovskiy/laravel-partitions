@@ -7,6 +7,7 @@ namespace Yurkovskiy\Partitions\Tests\Integration;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Yurkovskiy\Partitions\Events\PartitionsCreated;
 use Yurkovskiy\Partitions\Events\PartitionsDropped;
+use Yurkovskiy\Partitions\Exceptions\DropsEveryPartitionException;
 use Yurkovskiy\Partitions\Exceptions\ExpressionMismatchException;
 use Yurkovskiy\Partitions\Exceptions\NotPartitionedException;
 use Yurkovskiy\Partitions\Exceptions\StrategyMismatchException;
@@ -96,6 +97,23 @@ class LifecycleTest extends IntegrationTestCase
         $this->expectException(NotPartitionedException::class);
 
         $this->builder('transactions')->daily()->future(1)->sync();
+    }
+
+    public function test_a_drop_of_every_partition_leaves_the_table_whole(): void
+    {
+        $this->createTable('transactions');
+        $this->builder('transactions')->daily()->withoutMaxPartition()->future(3)->create();
+
+        try {
+            $this->builder('transactions')->daily()->withoutMaxPartition()->dropBefore('2027-01-01');
+
+            $this->fail('Every partition of the table was sent to DROP PARTITION.');
+        } catch (DropsEveryPartitionException) {
+            $this->assertSame(
+                ['p20261112', 'p20261113', 'p20261114', 'p20261115'],
+                $this->partitionsOf('transactions')
+            );
+        }
     }
 
     public function test_reorganising_the_max_partition_moves_its_rows_into_the_new_partitions(): void

@@ -52,6 +52,8 @@ class DropPartitionsCommand extends PartitionCommand
             return self::SUCCESS;
         }
 
+        $builder->assertDroppable($targets);
+
         $this->line(sprintf('Dropping %d partitions from [%s]:', $targets->count(), $builder->getTable()));
         $this->line('  '.$targets->map(fn (PartitionInfo $partition) => $partition->name)->implode(', '));
         $this->line(sprintf(

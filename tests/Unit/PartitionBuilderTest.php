@@ -15,6 +15,7 @@ use Yurkovskiy\Partitions\Events\PartitionsCreated;
 use Yurkovskiy\Partitions\Events\PartitionsDropped;
 use Yurkovskiy\Partitions\Events\PartitionsTruncated;
 use Yurkovskiy\Partitions\Exceptions\AlreadyPartitionedException;
+use Yurkovskiy\Partitions\Exceptions\DropsEveryPartitionException;
 use Yurkovskiy\Partitions\Exceptions\ExpressionMismatchException;
 use Yurkovskiy\Partitions\Exceptions\InvalidIdentifierException;
 use Yurkovskiy\Partitions\Exceptions\InvalidRangeException;
@@ -2251,5 +2252,72 @@ REORGANIZE PARTITION `pMax` INTO (
         }
 
         self::assertSame([], $repository->executed);
+    }
+
+    /**
+     * @return iterable<string, array{0: Closure(PartitionBuilder): mixed}>
+     */
+    public static function dropsOfTheWholeTable(): iterable
+    {
+        yield 'dropBefore()' => [fn (PartitionBuilder $builder) => $builder->dropBefore('2026-01-01')];
+        yield 'dropBetween()' => [fn (PartitionBuilder $builder) => $builder->dropBetween('2025-06-01', '2025-06-30')];
+        yield 'drop()' => [fn (PartitionBuilder $builder) => $builder->drop($builder->existing())];
+        yield 'dropStatements()' => [fn (PartitionBuilder $builder) => $builder->dropStatements($builder->existing())];
+        yield 'in one statement' => [fn (PartitionBuilder $builder) => $builder->chunk(null)->dropBefore('2026-01-01')];
+        yield 'in a dry run' => [fn (PartitionBuilder $builder) => $builder->dryRun()->dropBefore('2026-01-01')];
+    }
+
+    #[DataProvider('dropsOfTheWholeTable')]
+    public function test_a_drop_of_every_partition_is_refused_before_the_first_statement(Closure $drop): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250609' => '739777',
+            'p20250610' => '739778',
+            'p20250611' => '739779',
+        ]);
+        $events = new FakeDispatcher;
+        $builder = (new PartitionBuilder($repository, $events))
+            ->table('transactions')
+            ->daily('created_at')
+            ->withoutMaxPartition();
+
+        try {
+            $drop($builder);
+
+            self::fail('Every partition of the table was sent to DROP PARTITION.');
+        } catch (DropsEveryPartitionException $exception) {
+            self::assertSame(
+                'The 3 partitions selected are all that table [transactions] has, and MySQL keeps at least one '
+                .'partition in a partitioned table, so the last DROP PARTITION would fail. Narrow the selection, '
+                .'call removePartitioning() to keep the rows in a table without partitions, or drop the table itself.',
+                $exception->getMessage()
+            );
+        }
+
+        self::assertSame([], $repository->executed);
+        self::assertSame([], $events->dispatched);
+    }
+
+    public function test_the_max_partition_keeps_a_drop_of_every_period_possible(): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250609' => '739777',
+            'p20250610' => '739778',
+            'pMax' => 'MAXVALUE',
+        ]);
+
+        $statements = $this->builder($repository)->table('transactions')->daily('created_at')->dropBefore('2026-01-01');
+
+        self::assertCount(2, $statements);
+    }
+
+    public function test_the_whole_table_including_its_max_partition_is_not_dropped(): void
+    {
+        $repository = FakePartitionRepository::withPartitions(['p20250609' => '739777', 'pMax' => 'MAXVALUE']);
+        $builder = $this->builder($repository)->table('transactions')->daily('created_at');
+
+        $this->expectException(DropsEveryPartitionException::class);
+
+        $builder->drop($builder->existing());
     }
 }

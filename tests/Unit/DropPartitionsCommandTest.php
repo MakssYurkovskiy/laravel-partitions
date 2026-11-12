@@ -9,6 +9,7 @@ use Illuminate\Console\Command;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Yurkovskiy\Partitions\Console\DropPartitionsCommand;
 use Yurkovskiy\Partitions\Events\PartitionsDropped;
+use Yurkovskiy\Partitions\Exceptions\DropsEveryPartitionException;
 use Yurkovskiy\Partitions\Exceptions\StrategyMismatchException;
 use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\PartitionManager;
@@ -509,5 +510,40 @@ class DropPartitionsCommandTest extends CommandTestCase
         self::assertCount(4, $repository->executed);
         self::assertStringNotContainsString('pMax', implode(' ', $repository->executed));
         self::assertStringContainsString('`p20250613`', $repository->executed[3]);
+    }
+
+    /**
+     * @return iterable<string, array{0: array<string, mixed>}>
+     */
+    public static function selectionsOfTheWholeTable(): iterable
+    {
+        yield '--before' => [['--before' => '2026-01-01']];
+        yield '--from and --to' => [['--from' => '2025-06-01', '--to' => '2025-06-30']];
+        yield '--before with --force' => [['--before' => '2026-01-01', '--force' => true]];
+        yield '--before in a dry run' => [['--before' => '2026-01-01', '--dry-run' => true]];
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     */
+    #[DataProvider('selectionsOfTheWholeTable')]
+    public function test_a_selection_of_every_partition_stops_before_the_confirmation(array $options): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250610' => '739778',
+            'p20250611' => '739779',
+            'p20250612' => '739780',
+        ], expression: 'to_days(`created_at`)');
+        $command = $this->command($repository, ['max_partition' => false]);
+
+        try {
+            $this->runCommand($command, ['table' => 'transactions', ...$options]);
+
+            self::fail('The command went on to drop every partition.');
+        } catch (DropsEveryPartitionException $exception) {
+            self::assertStringContainsString('are all that table [transactions] has', $exception->getMessage());
+        }
+
+        self::assertSame([], $repository->executed);
     }
 }
