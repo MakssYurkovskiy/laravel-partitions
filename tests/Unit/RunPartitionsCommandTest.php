@@ -6,9 +6,11 @@ namespace Yurkovskiy\Partitions\Tests\Unit;
 
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Yurkovskiy\Partitions\Console\RunPartitionsCommand;
 use Yurkovskiy\Partitions\Exceptions\UnknownTableException;
 use Yurkovskiy\Partitions\PartitionManager;
+use Yurkovskiy\Partitions\Schema\TableInfo;
 use Yurkovskiy\Partitions\Tests\Support\CommandTestCase;
 use Yurkovskiy\Partitions\Tests\Support\CountingDailyStrategy;
 use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
@@ -126,16 +128,95 @@ REORGANIZE PARTITION `pMax` INTO (
         self::assertCount(1, $repository->executed);
     }
 
-    public function test_an_unpartitioned_table_is_reported_and_skipped(): void
+    public function test_an_unpartitioned_table_fails_the_run(): void
     {
-        $repository = new FakePartitionRepository;
+        $repository = new FakePartitionRepository([], new TableInfo('transactions'));
 
         $tester = $this->runCommand($this->command($repository, ['tables' => [
             'transactions' => ['column' => 'created_at'],
         ]]));
 
-        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
-        self::assertStringContainsString('not partitioned', $tester->getDisplay());
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertMatchesRegularExpression(
+            '/transactions\s+\|\s+transactions\s+\|\s+—\s+\|\s+—\s+\|\s+not partitioned/',
+            $tester->getDisplay()
+        );
+        self::assertSame([], $repository->executed);
+    }
+
+    public function test_a_table_that_does_not_exist_fails_the_run(): void
+    {
+        $repository = new FakePartitionRepository;
+
+        $tester = $this->runCommand($this->command($repository, ['tables' => [
+            'transactions' => ['table' => 'transactoins'],
+        ]]));
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertMatchesRegularExpression(
+            '/transactions\s+\|\s+transactoins\s+\|\s+—\s+\|\s+—\s+\|\s+table does not exist/',
+            $tester->getDisplay()
+        );
+        self::assertSame([], $repository->executed);
+    }
+
+    #[DataProvider('brokenEntries')]
+    public function test_an_entry_that_is_not_an_array_is_reported_and_the_rest_is_maintained(mixed $entry, string $type): void
+    {
+        $repository = $this->partitioned();
+
+        $tester = $this->runCommand($this->command($repository, ['tables' => [
+            'transactions' => $entry,
+            'audit' => ['table' => 'audit_logs', 'future' => 1],
+        ]]));
+
+        $output = $tester->getDisplay();
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertMatchesRegularExpression(
+            '/transactions\s+\|\s+transactions\s+\|\s+—\s+\|\s+—\s+\|\s+Table \[transactions\] in config\/partitions\.php has to be an array of settings, '.$type.' given\./',
+            $output
+        );
+        self::assertMatchesRegularExpression('/audit\s+\|\s+audit_logs\s+\|\s+1\s+\|\s+0\s+\|\s+1/', $output);
+        self::assertCount(1, $repository->executed);
+        self::assertStringContainsString('ALTER TABLE `audit_logs`', $repository->executed[0]);
+    }
+
+    /**
+     * @return array<string, array{mixed, string}>
+     */
+    public static function brokenEntries(): array
+    {
+        return [
+            'a strategy name' => ['daily', 'string'],
+            'null' => [null, 'null'],
+        ];
+    }
+
+    public function test_a_lone_broken_entry_fails_the_run(): void
+    {
+        $repository = $this->partitioned();
+
+        $tester = $this->runCommand($this->command($repository, ['tables' => ['transactions' => 'daily']]));
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringNotContainsString('No tables configured', $tester->getDisplay());
+        self::assertStringContainsString('has to be an array of settings, string given.', $tester->getDisplay());
+        self::assertSame([], $repository->executed);
+    }
+
+    public function test_a_named_broken_entry_is_reported_as_broken(): void
+    {
+        $repository = $this->partitioned();
+
+        $tester = $this->runCommand(
+            $this->command($repository, ['tables' => ['transactions' => null, 'audit' => []]]),
+            ['table' => 'transactions'],
+        );
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringNotContainsString('is not configured', $tester->getDisplay());
+        self::assertStringContainsString('has to be an array of settings, null given.', $tester->getDisplay());
         self::assertSame([], $repository->executed);
     }
 

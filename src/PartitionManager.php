@@ -10,6 +10,7 @@ use Illuminate\Support\Collection;
 use Psr\Log\LoggerInterface;
 use Yurkovskiy\Partitions\Contracts\PartitionRepository;
 use Yurkovskiy\Partitions\Contracts\PartitionStrategy;
+use Yurkovskiy\Partitions\Exceptions\InvalidTableConfigException;
 use Yurkovskiy\Partitions\Exceptions\UnknownStrategyException;
 use Yurkovskiy\Partitions\Exceptions\UnknownTableException;
 use Yurkovskiy\Partitions\Schema\PartitionPeriod;
@@ -77,26 +78,40 @@ class PartitionManager
 
     /**
      * @throws UnknownTableException
+     * @throws InvalidTableConfigException
      * @throws UnknownStrategyException
      */
     public function for(string $key): PartitionBuilder
     {
-        $settings = $this->tables()[$key] ?? null;
+        $tables = $this->tables();
 
-        if (! is_array($settings)) {
+        if (! array_key_exists($key, $tables)) {
             throw new UnknownTableException($key);
         }
 
-        return $this->fromArray($key, $settings);
+        if (! is_array($tables[$key])) {
+            throw new InvalidTableConfigException($key, $tables[$key]);
+        }
+
+        return $this->fromArray($key, $tables[$key]);
     }
 
     /**
+     * @throws InvalidTableConfigException
      * @throws UnknownStrategyException
      */
     public function forTable(string $table, ?string $connection = null): PartitionBuilder
     {
         foreach ($this->tables() as $key => $settings) {
-            if (! is_array($settings) || $this->tableName((string) $key, $settings) !== $table) {
+            if (! is_array($settings)) {
+                if ((string) $key === $table) {
+                    throw new InvalidTableConfigException($table, $settings);
+                }
+
+                continue;
+            }
+
+            if ($this->tableName((string) $key, $settings) !== $table) {
                 continue;
             }
 
@@ -112,7 +127,7 @@ class PartitionManager
 
     public function isConfigured(string $key): bool
     {
-        return is_array($this->tables()[$key] ?? null);
+        return array_key_exists($key, $this->tables());
     }
 
     /**
@@ -122,13 +137,14 @@ class PartitionManager
     {
         return array_map(
             fn (int|string $key): string => (string) $key,
-            array_keys(array_filter($this->tables(), is_array(...)))
+            array_keys($this->tables())
         );
     }
 
     /**
      * @return Collection<string, PartitionBuilder>
      *
+     * @throws InvalidTableConfigException
      * @throws UnknownStrategyException
      */
     public function configured(): Collection
