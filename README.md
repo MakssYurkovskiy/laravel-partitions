@@ -164,7 +164,7 @@ and the `information_schema` lookups carry the prefix.
 | `chunk(?int $size)` | Partitions per `DROP PARTITION` and `TRUNCATE PARTITION` statement (default 1, which keeps metadata locks short). `null` or `0` puts them all in one statement. Adding is split by `syncChunk()`. |
 | `syncChunk(?int $size)` | Partitions per statement that adds them (default `null`, all in one statement; `0` means the same). A size of N splits the additions into statements of N partitions each. Every `REORGANIZE` rewrites what is still in `pMax`, so splitting trades extra work for recoverability, see [filling a long gap](#filling-a-long-gap). |
 | `fillGaps(bool $fill = true)` | Start from the last covered period instead of today, so periods a table skipped while unattended are created too (default on). With `retain()` set, the skipped periods retention has already expired are not created: filling starts at the retention cutoff. An explicit `from()` is not moved back, but while gap filling is on the periods it skips are warned about; with `fillGaps(false)` the gap is left on purpose and nothing is said. |
-| `maxGaps(?int $gaps)` | How many skipped periods one run fills, oldest first (default 12). `null` or `0` lifts the limit; `pending()` is what the next `sync()` adds, `deferred()` what is left for a later run; `plan()` returns both from one pass over the table. |
+| `maxGaps(?int $gaps)` | How many skipped periods one run fills, oldest first (default 12). Only the periods before the current one count: the current period, the look-ahead of `future()` and an explicit `to()` ahead of today are never cut short, but they wait for a later run while more periods were skipped than one run fills — a partition cannot be added below an existing one. `null` or `0` lifts the limit; `pending()` is what the next `sync()` adds, `deferred()` what is left for a later run; `plan()` returns both from one pass over the table. |
 | `dryRun(bool $dryRun = true)` | Build the SQL, execute nothing. The table is still read, so `create()` and `removePartitioning()` throw in a dry run wherever they would throw for real. |
 
 ### Operations
@@ -175,7 +175,7 @@ the ones it would have run.
 | Method | Description |
 | --- | --- |
 | `create()` | Partition a table that is not partitioned yet. Throws when it already is. |
-| `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, up to `maxGaps()`. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. Partitions of the plan the table already has are left out, so a retry with the same plan after a failed statement sends only what is still missing. `syncStatements()` takes a plan the same way. |
+| `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, stopping after `maxGaps()` skipped periods when the table skipped more. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. Partitions of the plan the table already has are left out, so a retry with the same plan after a failed statement sends only what is still missing. `syncStatements()` takes a plan the same way. |
 | `prune()` | Drop what falls outside `retain()`, except the last partition with a boundary. |
 | `dropBefore($date)` | Drop everything older than the given date — its own calendar date for a date object, see [Dates you pass in](#dates-you-pass-in). |
 | `dropBetween($from, $to)` | Drop the partitions covering the range, inclusive on both ends. The bounds are normalised, so passing them the other way round selects the same partitions. |
@@ -364,7 +364,10 @@ rewrites all of it under a metadata lock.
 Two knobs bound that work:
 
 - `--max-gaps` (`maxGaps()`, config `max_gaps`, default 12) fills the oldest skipped periods only and
-  reports how many are left; the next run picks up where this one stopped. `0` lifts the limit.
+  reports how many partitions are left; the next run picks up where this one stopped. `0` lifts the
+  limit. It counts the periods before the current one and nothing else: on a table that is up to
+  date `--future=30` adds all thirty partitions in one run. The periods from today on are added by
+  the run that fills the last of the skipped ones.
 - `--chunk` (`syncChunk()`, config `sync_chunk`, default all in one statement) splits the additions
   into a sequence of statements of that many partitions each. The lock is released between them and
   the partitions already added survive a failure further down the list. The builder reads the table

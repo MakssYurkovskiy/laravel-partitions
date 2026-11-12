@@ -1615,6 +1615,72 @@ class PartitionBuilderTest extends TestCase
         $this->assertSame('p202407', $plan->deferred->first()?->name);
     }
 
+    public function test_the_gap_limit_leaves_the_periods_ahead_of_today_alone(): void
+    {
+        $repository = FakePartitionRepository::withPartitions(['p20250613' => '739781', 'pMax' => 'MAXVALUE']);
+
+        $plan = $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->future(30)
+            ->plan();
+
+        $this->assertSame(30, $plan->pending->count());
+        $this->assertSame('p20250713', $plan->pending->last()?->name);
+        $this->assertTrue($plan->deferred->isEmpty());
+    }
+
+    public function test_the_gap_limit_leaves_an_explicit_end_date_alone(): void
+    {
+        $repository = FakePartitionRepository::withPartitions(['p20250613' => '739781', 'pMax' => 'MAXVALUE']);
+
+        $plan = $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->to('2025-08-31')
+            ->maxGaps(3)
+            ->plan();
+
+        $this->assertSame(79, $plan->pending->count());
+        $this->assertTrue($plan->deferred->isEmpty());
+    }
+
+    public function test_skipped_periods_within_the_gap_limit_are_added_with_the_periods_ahead(): void
+    {
+        $repository = FakePartitionRepository::withPartitions(['p20250601' => '739769', 'pMax' => 'MAXVALUE']);
+
+        $plan = $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->future(30)
+            ->maxGaps(11)
+            ->plan();
+
+        $this->assertSame(42, $plan->pending->count());
+        $this->assertSame('p20250602', $plan->pending->first()?->name);
+        $this->assertTrue($plan->deferred->isEmpty());
+    }
+
+    public function test_skipped_periods_over_the_gap_limit_defer_the_periods_ahead_too(): void
+    {
+        $repository = FakePartitionRepository::withPartitions(['p20250601' => '739769', 'pMax' => 'MAXVALUE']);
+
+        $plan = $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->future(30)
+            ->maxGaps(10)
+            ->plan();
+
+        $this->assertSame(
+            ['p20250602', 'p20250611'],
+            [$plan->pending->first()?->name, $plan->pending->last()?->name]
+        );
+        $this->assertSame(10, $plan->pending->count());
+        $this->assertSame(32, $plan->deferred->count());
+        $this->assertSame('p20250612', $plan->deferred->first()?->name);
+    }
+
     public function test_syncing_plans_the_partitions_once(): void
     {
         CountingDailyStrategy::$plans = 0;

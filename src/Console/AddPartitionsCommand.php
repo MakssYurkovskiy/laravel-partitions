@@ -16,7 +16,7 @@ class AddPartitionsCommand extends PartitionCommand
         {--future= : Periods to keep created ahead of today when --to is omitted, counted from today rather than from the last partition}
         {--tablespace= : Tablespace for the created partitions}
         {--chunk= : Partitions added per ALTER statement (0 = all in one statement)}
-        {--max-gaps= : Skipped periods filled in this run, oldest first (0 = no limit)}
+        {--max-gaps= : Periods the table skipped before today that this run fills, oldest first (0 = no limit)}
         {--create : Partition a table that is not partitioned yet; without it such a table is refused}
         {--force : Do not ask for confirmation before rebuilding the table}
         {--dry-run : Print the SQL without running it}';
@@ -82,7 +82,8 @@ class AddPartitionsCommand extends PartitionCommand
 
         if ($deferred->isNotEmpty()) {
             $this->warn(sprintf(
-                '%d skipped periods are left (%s first). Run the command again to fill them — '
+                '%d partitions are left for the next run (%s first): the table skipped more periods than '
+                .'one run fills. Run the command again to add them — '
                 .'each run reorganises everything still sitting in the MAXVALUE partition.',
                 $deferred->count(),
                 $deferred->first()->name

@@ -99,14 +99,14 @@ class AddPartitionsCommandTest extends CommandTestCase
     public function test_adding_plans_the_partitions_once(): void
     {
         CountingDailyStrategy::$plans = 0;
-        $repository = $this->endingAt('p20250613', '739781');
+        $repository = $this->endingAt('p20250610', '739778');
 
         $tester = $this->runCommand($this->command($repository, ['tables' => [
             'transactions' => ['column' => 'created_at', 'strategy' => CountingDailyStrategy::class, 'future' => 2, 'max_gaps' => 1],
         ]]), ['table' => 'transactions']);
 
         self::assertSame(Command::SUCCESS, $tester->getStatusCode());
-        self::assertStringContainsString('Adding 1 of 2 missing partitions to [transactions]:', $tester->getDisplay());
+        self::assertStringContainsString('Adding 1 of 5 missing partitions to [transactions]:', $tester->getDisplay());
         self::assertSame(1, CountingDailyStrategy::$plans);
         self::assertCount(1, $repository->executed);
     }
@@ -644,7 +644,22 @@ class AddPartitionsCommandTest extends CommandTestCase
         self::assertStringContainsString('Adding 6 of 18 missing partitions to [transactions]:', $output);
         self::assertStringContainsString('p202406', $output);
         self::assertStringNotContainsString('p202407 (<', $output);
-        self::assertStringContainsString('12 skipped periods are left (p202407 first)', $output);
+        self::assertStringContainsString('12 partitions are left for the next run (p202407 first)', $output);
+        self::assertCount(1, $repository->executed);
+    }
+
+    public function test_a_longer_look_ahead_is_added_in_one_run_on_an_up_to_date_table(): void
+    {
+        $repository = $this->endingAt('p20250613', '739781');
+
+        $tester = $this->runCommand($this->command($repository), ['table' => 'transactions', '--future' => '30']);
+
+        $output = $tester->getDisplay();
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('Adding 30 partitions to [transactions]:', $output);
+        self::assertStringContainsString('p20250713', $output);
+        self::assertStringNotContainsString('are left for the next run', $output);
         self::assertCount(1, $repository->executed);
     }
 
@@ -667,7 +682,7 @@ class AddPartitionsCommandTest extends CommandTestCase
 
         self::assertSame(Command::SUCCESS, $tester->getStatusCode());
         self::assertStringContainsString('Adding 18 partitions to [transactions]:', $output);
-        self::assertStringNotContainsString('skipped periods are left', $output);
+        self::assertStringNotContainsString('are left for the next run', $output);
         self::assertCount(3, $repository->executed);
     }
 
@@ -685,6 +700,6 @@ class AddPartitionsCommandTest extends CommandTestCase
         ]);
 
         self::assertStringContainsString('Adding 12 of 18 missing partitions to [transactions]:', $tester->getDisplay());
-        self::assertStringContainsString('6 skipped periods are left (p202501 first)', $tester->getDisplay());
+        self::assertStringContainsString('6 partitions are left for the next run (p202501 first)', $tester->getDisplay());
     }
 }

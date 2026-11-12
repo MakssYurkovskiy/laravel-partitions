@@ -442,7 +442,7 @@ class PartitionBuilder
     {
         $missing = $this->missing();
 
-        if ($this->maxGaps === null) {
+        if ($this->maxGaps === null || $this->skipped($missing) <= $this->maxGaps) {
             return new PartitionPlan($missing, collect());
         }
 
@@ -1080,6 +1080,18 @@ class PartitionBuilder
             ->reject(fn (PendingPartition $pending) => in_array($pending->name, $names, true))
             ->reject(fn (PendingPartition $pending) => $floor !== null && $pending->upperBound->format('Y-m-d') <= $floor->format('Y-m-d'))
             ->values();
+    }
+
+    /**
+     * @param  Collection<int, PendingPartition>  $missing
+     */
+    protected function skipped(Collection $missing): int
+    {
+        $current = $this->getStrategy()->start($this->now())->format('Y-m-d');
+
+        return $missing
+            ->filter(fn (PendingPartition $pending) => $pending->start->format('Y-m-d') < $current)
+            ->count();
     }
 
     /**
