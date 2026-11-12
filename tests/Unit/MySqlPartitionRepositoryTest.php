@@ -6,10 +6,14 @@ namespace Yurkovskiy\Partitions\Tests\Unit;
 
 use Illuminate\Database\PostgresConnection;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
+use Yurkovskiy\Partitions\Exceptions\AlreadyPartitionedException;
 use Yurkovskiy\Partitions\Exceptions\UnsupportedDriverException;
+use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\Repositories\MySqlPartitionRepository;
 use Yurkovskiy\Partitions\Tests\Support\FakeConnectionResolver;
 use Yurkovskiy\Partitions\Tests\Support\RecordingConnection;
+use Yurkovskiy\Partitions\Tests\Support\ReplicatedConnection;
 
 class MySqlPartitionRepositoryTest extends TestCase
 {
@@ -256,6 +260,69 @@ class MySqlPartitionRepositoryTest extends TestCase
         $repository->statement('archive', 'alter table `transactions` remove partitioning');
 
         $this->assertSame(['archive', 'archive', 'archive'], $resolver->requested);
+    }
+
+    public function test_every_read_goes_to_the_write_connection(): void
+    {
+        $connection = new ReplicatedConnection(['p20250613' => '739781', 'pMax' => 'MAXVALUE']);
+        $repository = new MySqlPartitionRepository(new FakeConnectionResolver(['mysql' => $connection]));
+
+        $repository->partitions(null, 'transactions');
+        $repository->tableInfo(null, 'transactions');
+        $repository->unixTimestamps(null, ['2025-06-14 00:00:00']);
+
+        $this->assertSame([], $connection->replicaReads);
+        $this->assertCount(3, $connection->primaryReads);
+    }
+
+    public function test_a_retry_after_a_partial_failure_plans_from_the_primary(): void
+    {
+        $connection = new ReplicatedConnection(['p20250613' => '739781', 'pMax' => 'MAXVALUE']);
+        $connection->failingStatement = 2;
+        $repository = new MySqlPartitionRepository(new FakeConnectionResolver(['mysql' => $connection]));
+
+        $sync = fn () => (new PartitionBuilder($repository))
+            ->table('transactions')
+            ->daily('created_at')
+            ->to('2025-06-15')
+            ->syncChunk(1)
+            ->sync();
+
+        try {
+            $sync();
+            $this->fail('The second statement was expected to fail.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Lock wait timeout', $e->getMessage());
+            $this->assertCount(1, $connection->statements);
+        }
+
+        $retried = $sync();
+
+        $this->assertCount(1, $retried);
+        $this->assertStringContainsString('PARTITION `p20250615` VALUES LESS THAN', $retried[0]);
+        $this->assertStringNotContainsString('`p20250614`', $retried[0]);
+        $this->assertSame(['p20250613', 'p20250614', 'p20250615', 'pMax'], array_keys($connection->primary));
+        $this->assertSame(['p20250613', 'pMax'], array_keys($connection->replica));
+        $this->assertSame([], $connection->replicaReads);
+    }
+
+    public function test_a_table_the_replica_has_not_seen_partitioned_is_not_partitioned_again(): void
+    {
+        $connection = new ReplicatedConnection;
+        $connection->primary = ['p20250613' => '739781', 'pMax' => 'MAXVALUE'];
+        $repository = new MySqlPartitionRepository(new FakeConnectionResolver(['mysql' => $connection]));
+
+        try {
+            (new PartitionBuilder($repository))
+                ->table('transactions')
+                ->daily('created_at')
+                ->from('2025-06-13')
+                ->to('2025-06-15')
+                ->create();
+            $this->fail('The table is already partitioned on the primary.');
+        } catch (AlreadyPartitionedException) {
+            $this->assertSame([], $connection->statements);
+        }
     }
 
     protected function repository(RecordingConnection $connection): MySqlPartitionRepository
