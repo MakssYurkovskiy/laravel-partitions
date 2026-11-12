@@ -152,7 +152,7 @@ and the `information_schema` lookups carry the prefix.
 | `timezone($zone)` | Timezone the `unix_timestamp` boundaries are computed in. Defaults to the connection's `timezone`, then to the application one. |
 | `verifyTimezone(bool $verify = true)` | Ask the server how it reads the boundaries before running DDL, instead of writing ones that are off by the difference. |
 | `tablespace(?string $tablespace)` | Adds ``TABLESPACE = `...` `` to every generated partition. |
-| `withMaxPartition(bool\|string $max)` / `withoutMaxPartition()` | Catch-all `MAXVALUE` partition, `pMax` by default. `withoutMaxPartition()` describes the layout `create()` builds; on a table that already has one, `sync()` throws instead of quietly keeping it (see [below](#how-it-maps-to-mysql)). |
+| `withMaxPartition(bool\|string $max)` / `withoutMaxPartition()` | Catch-all `MAXVALUE` partition, `pMax` by default. The name is the one `create()`, `createStatement()`, `partitionByClause()` and a migration write, also when a migration replaces the partitioning of a table whose catch-all is named differently; `sync()` keeps the name the table already uses. `withoutMaxPartition()` describes the layout `create()` builds; on a table that already has one, `sync()` throws instead of quietly keeping it (see [below](#how-it-maps-to-mysql)). |
 
 ### Range and retention
 
@@ -717,7 +717,9 @@ way `WeeklyStrategy` does.
   database round trip.
 - Adding partitions to a table that has a `MAXVALUE` partition is done with
   `REORGANIZE PARTITION pMax INTO (..., PARTITION pMax VALUES LESS THAN MAXVALUE)`; the `MAXVALUE`
-  partition is always re-created, otherwise MySQL refuses to shrink the covered range. Without a
+  partition is always re-created, otherwise MySQL refuses to shrink the covered range. It is
+  re-created under the name the table already uses, whatever `withMaxPartition()` names — this is
+  the only place the existing name is looked up. Without a
   `MAXVALUE` partition the package emits a plain `ADD PARTITION`. The reorganisation rewrites the
   rows held by `pMax`, so it is only cheap while `pMax` is close to empty — `maxGaps()` and `syncChunk()`
   bound it when it is not (see [filling a long gap](#filling-a-long-gap)).

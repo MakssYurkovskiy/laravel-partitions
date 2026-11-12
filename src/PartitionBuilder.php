@@ -608,16 +608,15 @@ class PartitionBuilder
         }
 
         $table = $this->prefixedTable();
-        $hasMaxPartition = $this->hasMaxPartition();
-        $maxPartition = $this->maxPartitionName();
+        $maxPartition = $this->existingMaxPartition();
 
         return $pending
             ->chunk($this->syncChunk ?? $pending->count())
-            ->map(function (Collection $group) use ($table, $hasMaxPartition, $maxPartition) {
+            ->map(function (Collection $group) use ($table, $maxPartition) {
                 $definitions = $this->definitionsFor($group, withMax: false);
 
-                return $hasMaxPartition
-                    ? $this->grammar->reorganizeMaxPartition($table, $maxPartition, $definitions)
+                return $maxPartition !== null
+                    ? $this->grammar->reorganizeMaxPartition($table, $maxPartition->name, $definitions)
                     : $this->grammar->addPartitions($table, $definitions);
             })
             ->values();
@@ -867,7 +866,7 @@ class PartitionBuilder
             ->values();
 
         if ($withMax) {
-            $definitions->push($this->grammar->maxPartition($this->maxPartitionName()));
+            $definitions->push($this->grammar->maxPartition($this->maxPartition));
         }
 
         return $definitions;
@@ -908,11 +907,13 @@ class PartitionBuilder
      */
     protected function assertMaxPartitionMatches(): void
     {
-        if ($this->withMaxPartition || ! $this->hasMaxPartition()) {
+        $existing = $this->withMaxPartition ? null : $this->existingMaxPartition();
+
+        if ($existing === null) {
             return;
         }
 
-        throw new MaxPartitionConflictException($this->getTable(), $this->maxPartitionName());
+        throw new MaxPartitionConflictException($this->getTable(), $existing->name);
     }
 
     /**
@@ -1132,11 +1133,9 @@ class PartitionBuilder
         return $this->to ?? $this->getStrategy()->shift($this->now(), $this->future);
     }
 
-    protected function maxPartitionName(): string
+    protected function existingMaxPartition(): ?PartitionInfo
     {
-        $existing = $this->existing()->first(fn (PartitionInfo $partition) => $partition->isMax());
-
-        return $existing instanceof PartitionInfo ? $existing->name : $this->maxPartition;
+        return $this->existing()->first(fn (PartitionInfo $partition) => $partition->isMax());
     }
 
     /**

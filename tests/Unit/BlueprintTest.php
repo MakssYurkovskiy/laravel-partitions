@@ -196,7 +196,27 @@ class BlueprintTest extends TestCase
         $this->assertSame([['mysql', 'reporting.wp_transactions']], $this->repository->requested);
     }
 
-    public function test_it_adopts_the_max_partition_name_the_table_already_uses(): void
+    public function test_replacing_the_partitioning_names_the_max_partition_as_declared(): void
+    {
+        $this->bind($this->repository = FakePartitionRepository::withPartitions([
+            'p202505' => '739768',
+            'pMax' => 'MAXVALUE',
+        ]));
+
+        $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
+            $table->partitionByRange('created_at')
+                ->monthly()
+                ->withMaxPartition('p_new')
+                ->replacePartitioning()
+                ->between('2025-06-01', '2025-06-01');
+        });
+
+        $this->assertStringContainsString('PARTITION `p_new` VALUES LESS THAN MAXVALUE', $statements[0]);
+        $this->assertStringNotContainsString('pMax', $statements[0]);
+        $this->assertSame(0, $this->repository->reads);
+    }
+
+    public function test_replacing_the_partitioning_falls_back_to_the_configured_max_partition_name(): void
     {
         $this->bind($this->repository = FakePartitionRepository::withPartitions([
             'p202505' => '739768',
@@ -210,8 +230,30 @@ class BlueprintTest extends TestCase
                 ->between('2025-06-01', '2025-06-01');
         });
 
-        $this->assertStringContainsString('PARTITION `p_future` VALUES LESS THAN MAXVALUE', $statements[0]);
-        $this->assertStringNotContainsString('pMax', $statements[0]);
+        $this->assertStringContainsString('PARTITION `pMax` VALUES LESS THAN MAXVALUE', $statements[0]);
+        $this->assertStringNotContainsString('p_future', $statements[0]);
+    }
+
+    public function test_a_pretended_migration_compiles_the_same_max_partition_as_a_real_one(): void
+    {
+        $this->bind($this->repository = FakePartitionRepository::withPartitions([
+            'p202505' => '739768',
+            'p_future' => 'MAXVALUE',
+        ]));
+
+        $declare = function (Blueprint $table) {
+            $table->partitionByRange('created_at')
+                ->monthly()
+                ->replacePartitioning()
+                ->between('2025-06-01', '2025-06-01');
+        };
+
+        $real = $this->compile($this->connection(), 'transactions', $declare);
+
+        $connection = $this->connection();
+        $connection->pretend(function () use ($connection, $declare, $real) {
+            $this->assertSame($real, $this->compile($connection, 'transactions', $declare));
+        });
     }
 
     public function test_a_custom_strategy_class_can_be_declared(): void
