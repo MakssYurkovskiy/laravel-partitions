@@ -100,7 +100,7 @@ abstract class AbstractStrategy implements PartitionStrategy
     protected function decode(string $stamp): ?CarbonImmutable
     {
         try {
-            $date = CarbonImmutable::createFromFormat('!'.$this->format(), $stamp);
+            $date = CarbonImmutable::createFromFormat('!'.$this->format(), $stamp, 'UTC');
         } catch (Throwable) {
             return null;
         }

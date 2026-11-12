@@ -43,6 +43,8 @@ use Yurkovskiy\Partitions\Support\Identifier;
 
 class PartitionBuilder
 {
+    protected const FRAME = 'UTC';
+
     protected string $table = '';
 
     protected string $column = 'created_at';
@@ -1126,7 +1128,7 @@ class PartitionBuilder
             ->filter(function (PartitionInfo $partition) use ($cutoff) {
                 $start = $this->getStrategy()->parse($partition->name);
 
-                return $start !== null && $start->lessThan($cutoff);
+                return $start !== null && $start->format('Y-m-d H:i:s') < $cutoff->format('Y-m-d H:i:s');
             })
             ->values();
     }
@@ -1158,7 +1160,7 @@ class PartitionBuilder
 
     protected function dateOf(DateTimeInterface $boundary): CarbonImmutable
     {
-        return CarbonImmutable::parse($boundary->format('Y-m-d'));
+        return CarbonImmutable::parse($boundary->format('Y-m-d'), self::FRAME);
     }
 
     protected function resolveTo(): CarbonImmutable
@@ -1243,7 +1245,7 @@ class PartitionBuilder
         $expected = [];
 
         if ($this->verifiedDatetimes === []) {
-            $reference = $this->now()->setTimezone($this->getTimezone());
+            $reference = CarbonImmutable::now()->setTimezone($this->getTimezone());
             $expected[$reference->format('Y-m-d H:i:s')] = $reference->getTimestamp();
         }
 
@@ -1313,7 +1315,7 @@ class PartitionBuilder
 
     protected function now(): CarbonImmutable
     {
-        return CarbonImmutable::now();
+        return CarbonImmutable::now()->shiftTimezone(self::FRAME);
     }
 
     /**
@@ -1322,7 +1324,7 @@ class PartitionBuilder
     protected function toDate(DateTimeInterface|string $date): CarbonImmutable
     {
         if ($date instanceof DateTimeInterface) {
-            return CarbonImmutable::instance($date)->shiftTimezone(date_default_timezone_get());
+            return CarbonImmutable::instance($date)->shiftTimezone(self::FRAME);
         }
 
         if (trim($date) === '') {
@@ -1330,7 +1332,7 @@ class PartitionBuilder
         }
 
         try {
-            return CarbonImmutable::parse($date)->shiftTimezone(date_default_timezone_get());
+            return CarbonImmutable::parse($date)->shiftTimezone(self::FRAME);
         } catch (Throwable $e) {
             throw new InvalidDateException($date, $e);
         }

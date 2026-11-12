@@ -141,6 +141,37 @@ class StrategyTest extends TestCase
         );
     }
 
+    /**
+     * @return iterable<string, array{0: PartitionStrategy, 1: string, 2: string, 3: string}>
+     */
+    public static function namesOfSkippedMidnights(): iterable
+    {
+        yield 'daily' => [new DailyStrategy, 'America/Santiago', 'p20260906', '2026-09-06'];
+        yield 'weekly' => [new WeeklyStrategy, 'Asia/Tehran', 'p202112', '2021-03-22'];
+        yield 'monthly' => [new MonthlyStrategy, 'America/Asuncion', 'p202310', '2023-10-01'];
+        yield 'yearly' => [new YearlyStrategy, 'Asia/Khandyga', 'p2004', '2004-01-01'];
+    }
+
+    #[DataProvider('namesOfSkippedMidnights')]
+    public function test_a_name_is_parsed_to_midnight_even_where_the_application_timezone_skips_it(
+        PartitionStrategy $strategy,
+        string $zone,
+        string $name,
+        string $start
+    ): void {
+        $applicationTimezone = date_default_timezone_get();
+        date_default_timezone_set($zone);
+
+        try {
+            $parsed = $strategy->parse($name);
+        } finally {
+            date_default_timezone_set($applicationTimezone);
+        }
+
+        $this->assertSame("$start 00:00:00", $parsed?->format('Y-m-d H:i:s'));
+        $this->assertSame($name, $strategy->partitionName($parsed));
+    }
+
     public function test_foreign_partition_names_are_not_parsed(): void
     {
         $strategy = new DailyStrategy;
