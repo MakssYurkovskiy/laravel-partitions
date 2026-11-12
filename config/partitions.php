@@ -51,7 +51,7 @@ return [
     // Start from the last covered period, so skipped periods are created as well.
     'fill_gaps' => true,
 
-    // How many skipped periods a single run fills, oldest first (null = no limit).
+    // How many periods skipped before today a single run fills, oldest first (null = no limit).
     'max_gaps' => 12,
 
     /*
@@ -97,7 +97,7 @@ return [
     |   'connection'       Connection the table lives on, ahead of the model's
     |                      own one and of the default above (null = not given).
     |   'fill_gaps'        Create the periods the table skipped.
-    |   'max_gaps'         Skipped periods filled per run (null = no limit).
+    |   'max_gaps'         Periods skipped before today filled per run (null = no limit).
     |   'chunk'            Partitions dropped per ALTER statement (null = all
     |                      in one).
     |   'sync_chunk'       Partitions added per ALTER statement (null = all in
