@@ -451,10 +451,13 @@ Partition::configured()->each(fn ($builder) => $builder->maintain());
 ```
 
 `configured()` builds every table up front, so a single entry that cannot be built — an unknown
-timezone, strategy or expression — throws before any table is maintained. `configuredKeys()` lists
-the keys without building anything. `partitions:run` walks those keys and builds each table on its
-own: a broken entry, or a table whose maintenance fails, is reported with its error, the rest are
-still maintained, and the command exits with a failure code.
+timezone, strategy or expression, or an entry that is not an array of settings, such as
+`'transactions' => 'daily'` or a `null` left behind by a commented-out array — throws before any
+table is maintained. `configuredKeys()` lists every key of `tables` without building anything, and
+`isConfigured()` answers for a key that is there, whatever it holds. `partitions:run` walks those
+keys and builds each table on its own: a broken entry, a table that does not exist or is not
+partitioned, or a table whose maintenance fails, is reported with its error, the rest are still
+maintained, and the command exits with a failure code.
 
 A key is looked up as it is written, so a schema-qualified `'reporting.transactions' => [...]` is one
 table and not a path into a nested array.
@@ -635,6 +638,7 @@ whole, while a single case can be caught on its own.
 | Exception | Thrown when |
 | --- | --- |
 | `UnknownTableException` | the table key is missing from `config/partitions.php` — `Partition::for()`, `partitions:run {table}` |
+| `InvalidTableConfigException` | the table key is in `config/partitions.php`, but holds something other than an array of settings — `Partition::for()`, `configured()`, the artisan commands, and a migration of the table named by that key |
 | `UnknownStrategyException` | `strategy()` got a name that is neither daily/weekly/monthly/yearly nor a `PartitionStrategy` class, or a configured table's `strategy` is not a name, a `PartitionPeriod` case or a strategy at all |
 | `UnknownExpressionException` | `expression()` got something other than `to_days`, `unix_timestamp` or `columns` |
 | `MissingStrategyException` | the builder reached SQL without a strategy |

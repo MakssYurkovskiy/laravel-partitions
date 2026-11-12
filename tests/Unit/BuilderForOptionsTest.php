@@ -8,6 +8,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Yurkovskiy\Partitions\Console\AddPartitionsCommand;
+use Yurkovskiy\Partitions\Exceptions\InvalidTableConfigException;
 use Yurkovskiy\Partitions\PartitionManager;
 use Yurkovskiy\Partitions\Tests\Support\CommandTestCase;
 use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
@@ -89,6 +90,14 @@ class BuilderForOptionsTest extends CommandTestCase
         $sql = $this->sqlFor(['--strategy' => 'M', '--column' => 'processed_at', '--future' => '0']);
 
         self::assertStringContainsString('PARTITION `p202506` VALUES LESS THAN (739798)', $sql);
+    }
+
+    public function test_a_key_whose_entry_is_not_an_array_does_not_fall_back_to_the_defaults(): void
+    {
+        $this->expectException(InvalidTableConfigException::class);
+        $this->expectExceptionMessage('Table [transactions] in config/partitions.php has to be an array of settings, string given.');
+
+        $this->sqlFor(['--future' => '0'], ['tables' => ['transactions' => 'monthly']]);
     }
 
     public function test_a_shorthand_strategy_can_be_configured(): void

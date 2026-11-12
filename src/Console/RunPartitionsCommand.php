@@ -45,6 +45,13 @@ class RunPartitionsCommand extends PartitionCommand
                     $builder->dryRun();
                 }
 
+                if (($reason = $this->unmaintainable($builder)) !== null) {
+                    $failed = true;
+                    $rows[] = [$key, $table, '—', '—', '<fg=red>'.$reason.'</>'];
+
+                    continue;
+                }
+
                 $rows[] = $this->maintain($key, $builder);
             } catch (Throwable $e) {
                 $failed = true;
@@ -61,15 +68,20 @@ class RunPartitionsCommand extends PartitionCommand
         return $failed ? self::FAILURE : self::SUCCESS;
     }
 
+    protected function unmaintainable(PartitionBuilder $builder): ?string
+    {
+        if ($builder->isPartitioned()) {
+            return null;
+        }
+
+        return $builder->tableInfo() === null ? 'table does not exist' : 'not partitioned';
+    }
+
     /**
      * @return array<int, string>
      */
     protected function maintain(string $key, PartitionBuilder $builder): array
     {
-        if (! $builder->isPartitioned()) {
-            return [$key, $builder->getTable(), '—', '—', '<fg=yellow>not partitioned</>'];
-        }
-
         $plan = $builder->plan();
         $added = $plan->pending->count();
         $deferred = $plan->deferred->count();

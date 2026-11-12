@@ -7,6 +7,7 @@ namespace Yurkovskiy\Partitions\Tests\Unit;
 use Carbon\CarbonImmutable;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Yurkovskiy\Partitions\Exceptions\InvalidTableConfigException;
 use Yurkovskiy\Partitions\Exceptions\PartitionException;
 use Yurkovskiy\Partitions\Exceptions\TimezoneMismatchException;
 use Yurkovskiy\Partitions\Exceptions\UnknownStrategyException;
@@ -825,7 +826,6 @@ class PartitionManagerTest extends TestCase
         $manager = $this->manager(['tables' => [
             'transactions' => ['strategy' => 'monthly', 'column' => 'created_at'],
             'audit' => ['table' => 'audit_log_entries'],
-            'broken' => 'daily',
         ]]);
 
         $configured = $manager->configured();
@@ -845,8 +845,53 @@ class PartitionManagerTest extends TestCase
             'broken' => 'daily',
         ]]);
 
-        self::assertSame(['transactions', 'logs', 'audit'], $manager->configuredKeys());
+        self::assertSame(['transactions', 'logs', 'audit', 'broken'], $manager->configuredKeys());
         self::assertSame([], $this->manager()->configuredKeys());
+    }
+
+    public function test_an_entry_that_is_not_an_array_is_configured_but_cannot_be_built(): void
+    {
+        $manager = $this->manager(['tables' => ['transactions' => 'daily', 'audit' => null]]);
+
+        self::assertTrue($manager->isConfigured('transactions'));
+        self::assertTrue($manager->isConfigured('audit'));
+
+        try {
+            $manager->for('audit');
+            self::fail('A null entry was built.');
+        } catch (InvalidTableConfigException $e) {
+            self::assertSame(
+                'Table [audit] in config/partitions.php has to be an array of settings, null given.',
+                $e->getMessage()
+            );
+        }
+
+        $this->expectException(InvalidTableConfigException::class);
+        $this->expectExceptionMessage('Table [transactions] in config/partitions.php has to be an array of settings, string given.');
+
+        $manager->for('transactions');
+    }
+
+    public function test_configured_throws_on_an_entry_that_is_not_an_array(): void
+    {
+        $manager = $this->manager(['tables' => ['transactions' => [], 'audit' => 'daily']]);
+
+        $this->expectException(InvalidTableConfigException::class);
+        $this->expectExceptionMessage('Table [audit]');
+
+        $manager->configured();
+    }
+
+    public function test_a_migration_of_a_table_with_a_broken_entry_throws(): void
+    {
+        $manager = $this->manager(['tables' => ['transactions' => 'monthly', 'audit' => 'daily']]);
+
+        self::assertSame('audit_logs', $manager->forTable('audit_logs')->getTable());
+
+        $this->expectException(InvalidTableConfigException::class);
+        $this->expectExceptionMessage('Table [transactions]');
+
+        $manager->forTable('transactions');
     }
 
     public function test_configured_is_empty_without_tables(): void
