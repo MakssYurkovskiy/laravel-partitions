@@ -66,10 +66,10 @@ class BlueprintTest extends TestCase
         Container::setInstance($container);
     }
 
-    protected function bindVerifyingTimezone(int $sessionTimestamp): void
+    protected function bindVerifyingTimezone(string $sessionTimezone): void
     {
         $this->repository = new FakePartitionRepository;
-        $this->repository->unixTimestamp = $sessionTimestamp;
+        $this->repository->sessionTimezone = $sessionTimezone;
 
         $this->bind($this->repository, [
             'expression' => 'unix_timestamp',
@@ -398,7 +398,7 @@ class BlueprintTest extends TestCase
     #[DataProvider('blueprintKinds')]
     public function test_a_session_timezone_mismatch_stops_the_migration(bool $creating): void
     {
-        $this->bindVerifyingTimezone(CarbonImmutable::now()->getTimestamp() + 3600);
+        $this->bindVerifyingTimezone('Etc/GMT+1');
 
         try {
             $this->compile($this->connection(), 'transactions', function (Blueprint $table) use ($creating) {
@@ -416,24 +416,49 @@ class BlueprintTest extends TestCase
             $this->assertStringContainsString('+60 minutes away', $exception->getMessage());
         }
 
-        $this->assertSame(['2025-06-13 12:00:00'], $this->repository->timestampQueries);
+        $this->assertSame([['2025-06-13 12:00:00', '2025-06-14 00:00:00', '2025-06-15 00:00:00']], $this->repository->timestampQueries);
+    }
+
+    #[DataProvider('blueprintKinds')]
+    public function test_a_session_with_other_dst_rules_stops_the_migration(bool $creating): void
+    {
+        CarbonImmutable::setTestNow('2026-01-15 12:00:00');
+
+        $this->bindVerifyingTimezone('Europe/London');
+
+        try {
+            $this->compile($this->connection(), 'transactions', function (Blueprint $table) use ($creating) {
+                if ($creating) {
+                    $table->create();
+                    $table->id();
+                }
+
+                $table->partitionByRange('created_at')->monthly()->between('2026-01-01', '2026-08-01');
+            });
+
+            $this->fail('A session that reads the summer boundaries an hour away was accepted.');
+        } catch (TimezoneMismatchException $exception) {
+            $this->assertStringContainsString('reads [2026-04-01 00:00:00] -60 minutes away', $exception->getMessage());
+        }
+
+        $this->assertCount(1, $this->repository->timestampQueries);
     }
 
     public function test_a_matching_session_timezone_lets_the_migration_compile(): void
     {
-        $this->bindVerifyingTimezone(CarbonImmutable::now()->getTimestamp());
+        $this->bindVerifyingTimezone('UTC');
 
         $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
             $table->partitionByRange('created_at')->daily()->between('2025-06-13', '2025-06-14');
         });
 
         $this->assertStringContainsString('PARTITION BY RANGE (UNIX_TIMESTAMP(`created_at`))', $statements[0]);
-        $this->assertSame(['2025-06-13 12:00:00'], $this->repository->timestampQueries);
+        $this->assertSame([['2025-06-13 12:00:00', '2025-06-14 00:00:00', '2025-06-15 00:00:00']], $this->repository->timestampQueries);
     }
 
     public function test_the_migration_reads_the_session_timezone_only_for_unix_timestamp(): void
     {
-        $this->bindVerifyingTimezone(CarbonImmutable::now()->getTimestamp() + 3600);
+        $this->bindVerifyingTimezone('Etc/GMT+1');
 
         $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
             $table->partitionByRange('created_at')->daily()->usingToDays()->between('2025-06-13', '2025-06-14');
@@ -445,7 +470,7 @@ class BlueprintTest extends TestCase
 
     public function test_the_session_timezone_is_not_read_while_pretending(): void
     {
-        $this->bindVerifyingTimezone(CarbonImmutable::now()->getTimestamp() + 3600);
+        $this->bindVerifyingTimezone('Etc/GMT+1');
 
         $connection = $this->connection();
         $connection->pretend(function () use ($connection) {
@@ -541,7 +566,7 @@ class BlueprintTest extends TestCase
 
     public function test_the_timezone_check_of_a_configured_table_runs_in_the_migration(): void
     {
-        $this->repository->unixTimestamp = CarbonImmutable::now()->getTimestamp() + 3600;
+        $this->repository->sessionTimezone = 'Etc/GMT+1';
 
         $this->bind($this->repository, ['tables' => [
             'transactions' => ['expression' => 'unix_timestamp', 'timezone' => 'UTC', 'verify_timezone' => true],
@@ -556,7 +581,7 @@ class BlueprintTest extends TestCase
 
     public function test_the_timezone_check_can_be_declared_in_the_migration(): void
     {
-        $this->repository->unixTimestamp = CarbonImmutable::now()->getTimestamp() + 3600;
+        $this->repository->sessionTimezone = 'Etc/GMT+1';
 
         try {
             $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
@@ -573,7 +598,7 @@ class BlueprintTest extends TestCase
             $this->assertStringContainsString('+60 minutes away', $exception->getMessage());
         }
 
-        $this->bindVerifyingTimezone(CarbonImmutable::now()->getTimestamp() + 3600);
+        $this->bindVerifyingTimezone('Etc/GMT+1');
 
         $statements = $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
             $table->partitionByRange('created_at')->daily()->verifyTimezone(false)->between('2025-06-13', '2025-06-14');

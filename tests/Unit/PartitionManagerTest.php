@@ -138,7 +138,7 @@ class PartitionManagerTest extends TestCase
     public function test_the_config_sets_the_timezone_and_the_timezone_check(): void
     {
         $repository = new FakePartitionRepository;
-        $repository->unixTimestamp = 1749816000;
+        $repository->sessionTimezone = 'Europe/Kyiv';
 
         $builder = $this->manager([
             'expression' => 'unix_timestamp',
@@ -152,7 +152,7 @@ class PartitionManagerTest extends TestCase
 
         $builder->create();
 
-        self::assertSame(['2025-06-13 15:00:00'], $repository->timestampQueries);
+        self::assertSame([['2025-06-13 15:00:00', '2025-06-14 00:00:00']], $repository->timestampQueries);
     }
 
     public function test_empty_environment_values_count_as_not_set(): void
@@ -332,7 +332,7 @@ class PartitionManagerTest extends TestCase
         $this->manager($config, $maintained)->for('transactions')->maintain();
 
         $verified = new FakePartitionRepository;
-        $verified->unixTimestamp = 0;
+        $verified->sessionTimezone = 'Etc/GMT+1';
 
         try {
             $this->manager($config, $verified)->for('transactions')->usingUnixTimestamp()->create();
@@ -806,7 +806,7 @@ class PartitionManagerTest extends TestCase
     public function test_verify_timezone_can_be_enabled_per_table(): void
     {
         $repository = new FakePartitionRepository;
-        $repository->unixTimestamp = 0;
+        $repository->sessionTimezone = 'Etc/GMT+1';
 
         $builder = $this->manager(['tables' => ['transactions' => [
             'expression' => 'unix_timestamp',

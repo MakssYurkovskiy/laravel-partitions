@@ -78,13 +78,31 @@ class MySqlPartitionRepository implements PartitionRepository
         return is_string($timezone) && $timezone !== '' ? $timezone : null;
     }
 
-    public function unixTimestamp(?string $connection, string $datetime): ?int
+    public function unixTimestamps(?string $connection, array $datetimes): array
     {
-        $row = $this->connection($connection)->selectOne('select unix_timestamp(?) as epoch', [$datetime]);
+        $datetimes = array_values(array_unique($datetimes));
 
-        $epoch = is_object($row) ? ($row->epoch ?? null) : (is_array($row) ? ($row['epoch'] ?? null) : null);
+        if ($datetimes === []) {
+            return [];
+        }
 
-        return is_numeric($epoch) ? (int) $epoch : null;
+        $sql = implode(' union all ', array_map(
+            fn (int $position) => "select $position as position, unix_timestamp(?) as epoch",
+            array_keys($datetimes)
+        ));
+
+        $epochs = [];
+
+        foreach ($this->connection($connection)->select($sql, $datetimes) as $row) {
+            $row = (array) $row;
+            $datetime = $datetimes[(int) ($row['position'] ?? -1)] ?? null;
+
+            if ($datetime !== null && is_numeric($row['epoch'] ?? null)) {
+                $epochs[$datetime] = (int) $row['epoch'];
+            }
+        }
+
+        return $epochs;
     }
 
     public function statement(?string $connection, string $sql): bool

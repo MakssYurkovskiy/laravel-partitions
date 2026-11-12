@@ -9,6 +9,7 @@ use DateTimeZone;
 use Yurkovskiy\Partitions\Contracts\PartitionStrategy;
 use Yurkovskiy\Partitions\Exceptions\AlreadyPartitionedException;
 use Yurkovskiy\Partitions\Exceptions\MissingStrategyException;
+use Yurkovskiy\Partitions\Exceptions\PartitionException;
 use Yurkovskiy\Partitions\Exceptions\TimezoneMismatchException;
 use Yurkovskiy\Partitions\PartitionBuilder;
 
@@ -149,6 +150,7 @@ final class PartitionDefinition
      *
      * @throws AlreadyPartitionedException
      * @throws TimezoneMismatchException
+     * @throws PartitionException when the declared range or strategy cannot be planned
      */
     public function assertApplicable(bool $creating): void
     {
@@ -156,7 +158,7 @@ final class PartitionDefinition
             throw AlreadyPartitionedException::forMigration($this->builder->getTable());
         }
 
-        $this->builder->assertTimezoneMatches();
+        $this->builder->assertTimezoneMatches(planned: true);
     }
 
     /**

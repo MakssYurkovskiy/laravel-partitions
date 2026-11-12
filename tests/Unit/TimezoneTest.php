@@ -337,7 +337,7 @@ class TimezoneTest extends TestCase
         $this->pinNow('UTC');
 
         $repository = $this->repository(['pMax' => 'MAXVALUE']);
-        $repository->unixTimestamp = CarbonImmutable::now()->getTimestamp() + 3600;
+        $repository->sessionTimezone = 'Etc/GMT+1';
 
         try {
             $this->builder($repository)->timezone('UTC')->verifyTimezone()->sync();
@@ -348,7 +348,7 @@ class TimezoneTest extends TestCase
             $this->assertStringContainsString('+60 minutes away', $exception->getMessage());
         }
 
-        $this->assertSame(['2025-06-13 12:00:00'], $repository->timestampQueries);
+        $this->assertSame([['2025-06-13 12:00:00', '2025-06-14 00:00:00', '2025-06-15 00:00:00']], $repository->timestampQueries);
         $this->assertSame([], $repository->executed);
     }
 
@@ -357,12 +357,90 @@ class TimezoneTest extends TestCase
         $this->pinNow('UTC');
 
         $repository = $this->repository(['pMax' => 'MAXVALUE']);
-        $repository->unixTimestamp = CarbonImmutable::now()->getTimestamp();
+        $repository->sessionTimezone = 'UTC';
 
         $this->builder($repository)->timezone('UTC')->verifyTimezone()->sync();
 
-        $this->assertSame(['2025-06-13 12:00:00'], $repository->timestampQueries);
+        $this->assertSame([['2025-06-13 12:00:00', '2025-06-14 00:00:00', '2025-06-15 00:00:00']], $repository->timestampQueries);
         $this->assertCount(1, $repository->executed);
+    }
+
+    public function test_a_session_with_other_dst_rules_is_caught_before_the_clocks_change(): void
+    {
+        date_default_timezone_set('UTC');
+        CarbonImmutable::setTestNow('2026-01-15 12:00:00');
+
+        $repository = $this->repository(['pMax' => 'MAXVALUE']);
+        $repository->sessionTimezone = 'Europe/London';
+
+        try {
+            $this->builder($repository)->monthly()->timezone('UTC')->verifyTimezone()->future(7)->sync();
+
+            $this->fail('A session that reads the summer boundaries an hour away was accepted.');
+        } catch (TimezoneMismatchException $exception) {
+            $this->assertStringContainsString('reads [2026-04-01 00:00:00] -60 minutes away', $exception->getMessage());
+        }
+
+        $this->assertSame([[
+            '2026-01-15 12:00:00',
+            '2026-02-01 00:00:00',
+            '2026-03-01 00:00:00',
+            '2026-04-01 00:00:00',
+            '2026-05-01 00:00:00',
+            '2026-06-01 00:00:00',
+            '2026-07-01 00:00:00',
+            '2026-08-01 00:00:00',
+            '2026-09-01 00:00:00',
+        ]], $repository->timestampQueries);
+        $this->assertSame([], $repository->executed);
+    }
+
+    public function test_a_session_zone_with_the_same_dst_rules_passes_through_the_clock_change(): void
+    {
+        date_default_timezone_set('UTC');
+        CarbonImmutable::setTestNow('2026-01-15 12:00:00');
+
+        $repository = $this->repository(['pMax' => 'MAXVALUE']);
+        $repository->sessionTimezone = 'Europe/Lisbon';
+
+        $this->builder($repository)->monthly()->timezone('Europe/London')->verifyTimezone()->future(7)->sync();
+
+        $this->assertCount(1, $repository->timestampQueries);
+        $this->assertCount(1, $repository->executed);
+    }
+
+    public function test_a_datetime_the_server_already_confirmed_is_not_asked_again(): void
+    {
+        $this->pinNow('UTC');
+
+        $repository = $this->repository(['pMax' => 'MAXVALUE']);
+        $repository->sessionTimezone = 'UTC';
+
+        $builder = $this->builder($repository)->timezone('UTC')->verifyTimezone();
+        $builder->sync();
+        $builder->removePartitioning();
+        $builder->future(2)->sync();
+
+        $this->assertSame([
+            ['2025-06-13 12:00:00', '2025-06-14 00:00:00', '2025-06-15 00:00:00'],
+            ['2025-06-16 00:00:00'],
+        ], $repository->timestampQueries);
+        $this->assertCount(3, $repository->executed);
+    }
+
+    public function test_changing_the_timezone_asks_the_server_again(): void
+    {
+        $this->pinNow('UTC');
+
+        $repository = $this->repository(['pMax' => 'MAXVALUE']);
+        $repository->sessionTimezone = 'UTC';
+
+        $builder = $this->builder($repository)->timezone('UTC')->verifyTimezone();
+        $builder->sync();
+
+        $this->expectException(TimezoneMismatchException::class);
+
+        $builder->timezone('Europe/Kyiv')->future(2)->sync();
     }
 
     public function test_the_session_timezone_is_only_read_when_it_matters(): void
@@ -370,12 +448,12 @@ class TimezoneTest extends TestCase
         $this->pinNow('UTC');
 
         $repository = $this->repository(['pMax' => 'MAXVALUE']);
-        $repository->unixTimestamp = CarbonImmutable::now()->getTimestamp() + 3600;
+        $repository->sessionTimezone = 'Etc/GMT+1';
 
         $this->builder($repository)->timezone('UTC')->sync();
 
         $toDays = $this->repository(['pMax' => 'MAXVALUE'], 'to_days');
-        $toDays->unixTimestamp = CarbonImmutable::now()->getTimestamp() + 3600;
+        $toDays->sessionTimezone = 'Etc/GMT+1';
 
         $this->builder($toDays)->expression('to_days')->verifyTimezone()->sync();
 
@@ -390,7 +468,7 @@ class TimezoneTest extends TestCase
         $this->pinNow('UTC');
 
         $repository = $this->repository(['pMax' => 'MAXVALUE']);
-        $repository->unixTimestamp = CarbonImmutable::now()->getTimestamp() + 3600;
+        $repository->sessionTimezone = 'Etc/GMT+1';
 
         $statements = $this->builder($repository)->timezone('UTC')->verifyTimezone()->dryRun()->sync();
 
