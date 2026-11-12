@@ -175,7 +175,7 @@ the ones it would have run.
 | Method | Description |
 | --- | --- |
 | `create()` | Partition a table that is not partitioned yet. Throws when it already is. |
-| `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, up to `maxGaps()`. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. `syncStatements()` takes a plan the same way. |
+| `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, up to `maxGaps()`. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. Partitions of the plan the table already has are left out, so a retry with the same plan after a failed statement sends only what is still missing. `syncStatements()` takes a plan the same way. |
 | `prune()` | Drop what falls outside `retain()`, except the last partition with a boundary. |
 | `dropBefore($date)` | Drop everything older than the given date — its own calendar date for a date object, see [Dates you pass in](#dates-you-pass-in). |
 | `dropBetween($from, $to)` | Drop the partitions covering the range, inclusive on both ends. The bounds are normalised, so passing them the other way round selects the same partitions. |

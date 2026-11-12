@@ -433,13 +433,9 @@ class PartitionBuilder
         $this->assertMatchesExisting($existing);
         $this->assertPeriodMatchesExisting($existing);
 
-        $names = $existing->map(fn (PartitionInfo $partition) => $partition->name)->all();
         $floor = $this->highestBoundary($existing);
 
-        return $this->plannedPartitions($this->resolveFrom($floor))
-            ->reject(fn (PendingPartition $pending) => in_array($pending->name, $names, true))
-            ->reject(fn (PendingPartition $pending) => $floor !== null && $pending->upperBound->format('Y-m-d') <= $floor->format('Y-m-d'))
-            ->values();
+        return $this->absent($this->plannedPartitions($this->resolveFrom($floor)), $existing, $floor);
     }
 
     public function plan(): PartitionPlan
@@ -567,6 +563,7 @@ class PartitionBuilder
      */
     public function outdatedAfter(PartitionPlan $plan): Collection
     {
+        $plan = $this->current($plan);
         $cutoff = $this->retentionCutoff();
 
         if ($cutoff === null || $plan->pending->isEmpty()) {
@@ -604,7 +601,7 @@ class PartitionBuilder
     {
         $this->assertMaxPartitionMatches();
 
-        $pending = ($plan ?? $this->plan())->pending;
+        $pending = $this->current($plan)->pending;
 
         if ($pending->isEmpty()) {
             return collect();
@@ -672,7 +669,7 @@ class PartitionBuilder
      */
     public function sync(?PartitionPlan $plan = null): Collection
     {
-        $plan ??= $this->plan();
+        $plan = $this->current($plan);
         $statements = $this->syncStatements($plan);
 
         if ($statements->isEmpty()) {
@@ -734,7 +731,7 @@ class PartitionBuilder
      */
     public function maintain(?PartitionPlan $plan = null): array
     {
-        $plan ??= $this->plan();
+        $plan = $this->current($plan);
         $outdated = $this->outdatedAfter($plan);
 
         return [
@@ -1053,6 +1050,35 @@ class PartitionBuilder
         $last = $this->lastBounded($existing);
 
         return $last === null ? null : $this->boundaryOf($last);
+    }
+
+    protected function current(?PartitionPlan $plan): PartitionPlan
+    {
+        if ($plan === null) {
+            return $this->plan();
+        }
+
+        $existing = $this->existing();
+
+        return new PartitionPlan(
+            $this->absent($plan->pending, $existing, $this->highestBoundary($existing)),
+            $plan->deferred,
+        );
+    }
+
+    /**
+     * @param  Collection<int, PendingPartition>  $partitions
+     * @param  Collection<int, PartitionInfo>  $existing
+     * @return Collection<int, PendingPartition>
+     */
+    protected function absent(Collection $partitions, Collection $existing, ?DateTimeInterface $floor): Collection
+    {
+        $names = $existing->map(fn (PartitionInfo $partition) => $partition->name)->all();
+
+        return $partitions
+            ->reject(fn (PendingPartition $pending) => in_array($pending->name, $names, true))
+            ->reject(fn (PendingPartition $pending) => $floor !== null && $pending->upperBound->format('Y-m-d') <= $floor->format('Y-m-d'))
+            ->values();
     }
 
     /**
