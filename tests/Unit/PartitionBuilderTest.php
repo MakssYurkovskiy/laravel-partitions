@@ -1258,6 +1258,48 @@ class PartitionBuilderTest extends TestCase
         ], $statements->all());
     }
 
+    public function test_building_the_create_sql_does_not_read_the_table(): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250612' => '739780',
+            'p_future' => 'MAXVALUE',
+        ]);
+
+        $builder = $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->withMaxPartition('p_new')
+            ->between('2025-06-13', '2025-06-13');
+
+        $this->assertStringContainsString('PARTITION `p_new` VALUES LESS THAN MAXVALUE', $builder->createStatement());
+        $this->assertStringContainsString('PARTITION `p_new` VALUES LESS THAN MAXVALUE', $builder->partitionByClause());
+        $this->assertSame(0, $repository->reads);
+        $this->assertSame(0, $repository->tableReads);
+    }
+
+    public function test_sync_reorganizes_the_max_partition_under_the_name_the_table_uses(): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250612' => '739780',
+            'p_future' => 'MAXVALUE',
+        ]);
+
+        $statements = $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->withMaxPartition('p_new')
+            ->to('2025-06-13')
+            ->syncStatements();
+
+        $this->assertSame([<<<'SQL'
+            ALTER TABLE `transactions`
+            REORGANIZE PARTITION `p_future` INTO (
+                PARTITION `p20250613` VALUES LESS THAN (739781),
+                PARTITION `p_future` VALUES LESS THAN MAXVALUE
+            )
+            SQL], $statements->all());
+    }
+
     public function test_the_guard_does_not_read_the_table_when_there_is_no_retention(): void
     {
         $repository = $this->mismatchedRepository();

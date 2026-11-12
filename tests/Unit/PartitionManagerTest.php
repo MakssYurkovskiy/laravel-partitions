@@ -82,21 +82,23 @@ class PartitionManagerTest extends TestCase
     {
         $repository = new FakePartitionRepository;
 
-        $sql = $this->manager([
+        $builder = $this->manager([
             'prefix' => 'part',
             'max_partition' => 'overflow',
             'tablespace' => 'transactions_space',
             'expression' => 'columns',
             'future' => 1,
             'connection' => 'reports',
-        ], $repository)->newBuilder()->table('transactions')->daily('created_at')->createStatement();
+        ], $repository)->newBuilder()->table('transactions')->daily('created_at');
+
+        $sql = $builder->createStatement();
 
         self::assertStringContainsString('PARTITION BY RANGE COLUMNS(`created_at`)', $sql);
         self::assertStringContainsString("PARTITION `part20250613` VALUES LESS THAN ('2025-06-14') TABLESPACE = `transactions_space`", $sql);
         self::assertStringContainsString("PARTITION `part20250614` VALUES LESS THAN ('2025-06-15')", $sql);
         self::assertStringNotContainsString('part20250615', $sql);
         self::assertStringContainsString('PARTITION `overflow` VALUES LESS THAN MAXVALUE TABLESPACE = `transactions_space`', $sql);
-        self::assertSame([['reports', 'transactions']], $repository->requested);
+        self::assertSame('reports', $builder->getConnection());
     }
 
     public function test_a_falsy_max_partition_in_the_config_drops_the_catch_all(): void
