@@ -32,6 +32,7 @@ use Yurkovskiy\Partitions\Exceptions\NotPartitionedException;
 use Yurkovskiy\Partitions\Exceptions\PartitionException;
 use Yurkovskiy\Partitions\Exceptions\StrategyMismatchException;
 use Yurkovskiy\Partitions\Exceptions\TimezoneMismatchException;
+use Yurkovskiy\Partitions\Exceptions\TooManyPartitionsException;
 use Yurkovskiy\Partitions\Exceptions\UnknownStrategyException;
 use Yurkovskiy\Partitions\Schema\PartitionExpression;
 use Yurkovskiy\Partitions\Schema\PartitionGap;
@@ -46,6 +47,8 @@ use Yurkovskiy\Partitions\Support\Identifier;
 class PartitionBuilder
 {
     protected const FRAME = 'UTC';
+
+    protected const MAX_PARTITIONS = 8192;
 
     protected string $table = '';
 
@@ -864,6 +867,9 @@ class PartitionBuilder
 
     /**
      * @return Collection<int, PendingPartition>
+     *
+     * @throws InvalidRangeException
+     * @throws TooManyPartitionsException
      */
     protected function plannedPartitions(?CarbonImmutable $from = null): Collection
     {
@@ -871,18 +877,31 @@ class PartitionBuilder
 
         $this->assertRangeCoversAPeriod();
 
-        return collect($strategy->periods($from ?? $this->resolveFrom(), $this->resolveTo()))
-            ->map(function (CarbonImmutable $start) use ($strategy) {
-                $upperBound = $strategy->next($start);
+        $from ??= $this->resolveFrom();
+        $to = $this->resolveTo();
+        $planned = collect();
 
-                return new PendingPartition(
-                    name: $strategy->partitionName($start),
-                    start: $start,
-                    upperBound: $upperBound,
-                    boundary: $this->expression->boundary($upperBound, $this->boundaryTimezone()),
+        foreach ($strategy->periods($from, $to) as $start) {
+            if ($planned->count() === self::MAX_PARTITIONS) {
+                throw TooManyPartitionsException::forRange(
+                    $this->getTable(),
+                    $from->toDateString(),
+                    $to->toDateString(),
+                    self::MAX_PARTITIONS
                 );
-            })
-            ->values();
+            }
+
+            $upperBound = $strategy->next($start);
+
+            $planned->push(new PendingPartition(
+                name: $strategy->partitionName($start),
+                start: $start,
+                upperBound: $upperBound,
+                boundary: $this->expression->boundary($upperBound, $this->boundaryTimezone()),
+            ));
+        }
+
+        return $planned;
     }
 
     /**
@@ -1198,9 +1217,20 @@ class PartitionBuilder
         return CarbonImmutable::parse($boundary->format('Y-m-d'), self::FRAME);
     }
 
+    /**
+     * @throws TooManyPartitionsException
+     */
     protected function resolveTo(): CarbonImmutable
     {
-        return $this->to ?? $this->getStrategy()->shift($this->now(), $this->future);
+        if ($this->to !== null) {
+            return $this->to;
+        }
+
+        if ($this->future > self::MAX_PARTITIONS) {
+            throw TooManyPartitionsException::forLookAhead($this->getTable(), $this->future, self::MAX_PARTITIONS);
+        }
+
+        return $this->getStrategy()->shift($this->now(), $this->future);
     }
 
     protected function existingMaxPartition(): ?PartitionInfo

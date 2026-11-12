@@ -21,6 +21,7 @@ use Yurkovskiy\Partitions\Exceptions\InvalidIdentifierException;
 use Yurkovskiy\Partitions\Exceptions\InvalidRangeException;
 use Yurkovskiy\Partitions\Exceptions\MaxPartitionConflictException;
 use Yurkovskiy\Partitions\Exceptions\NotPartitionedException;
+use Yurkovskiy\Partitions\Exceptions\TooManyPartitionsException;
 use Yurkovskiy\Partitions\Exceptions\UnknownStrategyException;
 use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\Schema\PendingPartition;
@@ -2410,5 +2411,42 @@ REORGANIZE PARTITION `pMax` INTO (
             'p20250612' => '739780',
             'pMax' => 'MAXVALUE',
         ]);
+    }
+
+    public function test_a_look_ahead_past_the_partition_limit_is_refused_before_it_is_walked(): void
+    {
+        $builder = $this->builder()->table('transactions')->daily('created_at')->future(999_999_999_999_999_999);
+
+        $this->expectException(TooManyPartitionsException::class);
+        $this->expectExceptionMessage(
+            'future(999999999999999999) for table [transactions] looks further ahead than the 8192 partitions MySQL '
+            .'allows in one table. Lower the look-ahead.'
+        );
+
+        $builder->createStatement();
+    }
+
+    public function test_a_range_of_more_periods_than_a_table_can_hold_is_refused(): void
+    {
+        $builder = $this->builder()->table('transactions')->daily('created_at')->between('2000-01-01', '2025-06-13');
+
+        $this->expectException(TooManyPartitionsException::class);
+        $this->expectExceptionMessage(
+            'The range for table [transactions], 2000-01-01 to 2025-06-13, covers more than 8192 periods, and 8192 '
+            .'partitions is all MySQL allows in one table. Narrow the range, or partition by a longer period.'
+        );
+
+        $builder->createStatement();
+    }
+
+    public function test_the_same_span_in_longer_periods_fits(): void
+    {
+        $sql = $this->builder()
+            ->table('transactions')
+            ->monthly('created_at')
+            ->between('2000-01-01', '2025-06-13')
+            ->createStatement();
+
+        self::assertSame(306, substr_count($sql, 'VALUES LESS THAN ('));
     }
 }

@@ -387,7 +387,9 @@ A table with years of backlog is cheapest to fix in a maintenance window with `-
 statement, one rewrite), or by moving the data out, rebuilding with `create()` and loading it back.
 
 `partitions:drop` prints the partitions, the estimated row count and the disk space it is about to
-delete, and asks for confirmation too. Its `--from`/`--to` pair is inclusive and order-insensitive:
+delete, and asks for confirmation too. `--before`, the `--from`/`--to` pair and `--retain` are three
+ways of selecting what to drop, and the command takes one: two of them together stop it before
+anything is selected, rather than one quietly winning. Its `--from`/`--to` pair is inclusive and order-insensitive:
 swapped bounds select the same partitions rather than an empty range. The pair goes together: either
 one alone stops the command before anything is selected, in a dry run and on an unpartitioned table
 too. A selection that takes every partition of the table — possible only without a `MAXVALUE`
@@ -406,8 +408,12 @@ options are only overrides. `--strategy` takes a period by its name or a shortha
 `d`) or the class name of a custom strategy, `--expression` takes `to_days`, `unix_timestamp` or
 `columns`; `--help` lists both from the enums that define them. An option passed empty
 (`--tablespace=`) is not an override. `--future`, `--retain`, `--chunk` and `--max-gaps` take a whole
-number, zero or above: anything else — `--retain=abc`, `--future=-1` — fails the command before a
-statement is built, instead of being read as `0`.
+number, zero or above: anything else — `--retain=abc`, `--future=-1`, a number too long for an
+integer — fails the command before a statement is built, instead of being read as `0`.
+
+`partitions:list` and `partitions:drop` tell a table that is not partitioned from one that is not
+there: a name the connection does not know ends the command with `Table [...] does not exist.` and a
+failure code, so a misspelt name does not pass for a plain table.
 
 ## Configuration and scheduled maintenance
 
@@ -483,7 +489,9 @@ A key is looked up as it is written, so a schema-qualified `'reporting.transacti
 table and not a path into a nested array.
 
 Set `PARTITIONS_SCHEDULE_ENABLED=true` to have `partitions:run` scheduled automatically
-(`partitions.schedule.cron`, `withoutOverlapping()`, optionally `onOneServer()`); an empty
+(`partitions.schedule.cron`, `withoutOverlapping()`, and `onOneServer()` unless
+`partitions.schedule.on_one_server` is `false` — a `schedule` array that leaves the key out keeps it
+on); an empty
 `PARTITIONS_SCHEDULE_CRON=` keeps the default `15 3 * * *`. Or schedule it yourself:
 
 ```php
@@ -684,6 +692,7 @@ whole, while a single case can be caught on its own.
 | `InvalidTimezoneException` | `timezone()` got an identifier PHP does not know |
 | `InvalidDateException` | a date given as a string is blank or is not one PHP can read — `from()`, `to()`, `between()`, `has()`, `partitionNameFor()`, `inRange()`, `outdated()`, `dropBefore()`, `dropBetween()`, the same methods in a migration, and the `--from`, `--to` and `--before` options; Carbon's own exception is kept as `getPrevious()` |
 | `InvalidRangeException` | `from()` lies past the end of the range — `to()`, or today plus `future()` when `to()` is not set — so `create()`, `sync()` or a migration would cover no period |
+| `TooManyPartitionsException` | the range, or `future()`, covers more than 8192 periods — the number of partitions MySQL allows in one table — so `create()`, `sync()` or a migration could not be run; thrown before the periods are walked |
 | `TimezoneMismatchException` | `verifyTimezone()` found the session timezone away from the configured one, on the builder or in a migration |
 | `AlreadyPartitionedException` | `create()` on a partitioned table, or `partitionByRange()` in a migration without `replacePartitioning()` |
 | `NotPartitionedException` | `removePartitioning()` on a table that is not partitioned, from the builder or from a migration; `sync()`, `syncStatements()` or `maintain()` on such a table, before any statement is built |

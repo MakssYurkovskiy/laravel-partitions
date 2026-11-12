@@ -59,6 +59,11 @@ class PartitionServiceProviderTest extends TestCase
         ]);
     }
 
+    protected function enabledScheduleWithNothingElse($app): void
+    {
+        $app['config']->set('partitions.schedule', ['enabled' => true]);
+    }
+
     protected function enabledScheduleWithAnEmptyCron($app): void
     {
         $app['config']->set('partitions.schedule', [
@@ -272,6 +277,16 @@ class PartitionServiceProviderTest extends TestCase
         self::assertSame('15 3 * * *', $events[0]->expression);
         self::assertTrue($events[0]->withoutOverlapping);
         self::assertFalse($events[0]->onOneServer);
+    }
+
+    #[DefineEnvironment('enabledScheduleWithNothingElse')]
+    public function test_a_schedule_entry_without_the_other_keys_keeps_their_defaults(): void
+    {
+        $events = $this->app->make(Schedule::class)->events();
+
+        self::assertCount(1, $events);
+        self::assertSame('15 3 * * *', $events[0]->expression);
+        self::assertTrue($events[0]->onOneServer);
     }
 
     #[DefineEnvironment('enabledScheduleWithAnEmptyCron')]

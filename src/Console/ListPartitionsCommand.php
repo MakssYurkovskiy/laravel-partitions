@@ -21,9 +21,7 @@ class ListPartitionsCommand extends PartitionCommand
         $partitions = $builder->existing();
 
         if ($partitions->isEmpty()) {
-            $this->warn("Table [{$builder->getTable()}] is not partitioned.");
-
-            return self::SUCCESS;
+            return $this->unpartitioned($builder);
         }
 
         $this->table(

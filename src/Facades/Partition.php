@@ -16,6 +16,7 @@ use Yurkovskiy\Partitions\PartitionManager;
  * @method static \Yurkovskiy\Partitions\PartitionBuilder monthly(\Illuminate\Database\Eloquent\Model|string $table, string $column = 'created_at')
  * @method static \Yurkovskiy\Partitions\PartitionBuilder yearly(\Illuminate\Database\Eloquent\Model|string $table, string $column = 'created_at')
  * @method static \Yurkovskiy\Partitions\PartitionBuilder for(string $key)
+ * @method static \Yurkovskiy\Partitions\PartitionBuilder forTable(string $table, ?string $connection = null)
  * @method static bool isConfigured(string $key)
  * @method static list<string> configuredKeys()
  * @method static \Illuminate\Support\Collection<string, \Yurkovskiy\Partitions\PartitionBuilder> configured()

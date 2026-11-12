@@ -13,6 +13,7 @@ use Yurkovskiy\Partitions\Exceptions\DropsEveryPartitionException;
 use Yurkovskiy\Partitions\Exceptions\StrategyMismatchException;
 use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\PartitionManager;
+use Yurkovskiy\Partitions\Schema\TableInfo;
 use Yurkovskiy\Partitions\Tests\Support\CommandTestCase;
 use Yurkovskiy\Partitions\Tests\Support\FakeDispatcher;
 use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
@@ -55,9 +56,55 @@ class DropPartitionsCommandTest extends CommandTestCase
         ], expression: 'to_days(`created_at`)');
     }
 
-    public function test_an_unpartitioned_table_is_left_alone(): void
+    public function test_a_table_that_does_not_exist_is_not_called_unpartitioned(): void
     {
         $repository = new FakePartitionRepository;
+
+        $tester = $this->runCommand(
+            $this->command($repository),
+            ['table' => 'transactoins', '--retain' => '1', '--force' => true],
+        );
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Table [transactoins] does not exist.', $tester->getDisplay());
+        self::assertStringNotContainsString('is not partitioned', $tester->getDisplay());
+        self::assertSame([], $repository->executed);
+    }
+
+    /**
+     * @return iterable<string, array{0: array<string, string>}>
+     */
+    public static function selectorsGivenTogether(): iterable
+    {
+        yield '--before with a range' => [['--before' => '2025-06-12', '--from' => '2025-06-10', '--to' => '2025-06-11']];
+        yield '--before with --retain' => [['--before' => '2025-06-12', '--retain' => '1']];
+        yield 'a range with --retain' => [['--from' => '2025-06-10', '--to' => '2025-06-11', '--retain' => '1']];
+    }
+
+    /**
+     * @param  array<string, string>  $options
+     */
+    #[DataProvider('selectorsGivenTogether')]
+    public function test_two_ways_of_selecting_partitions_stop_the_command(array $options): void
+    {
+        $repository = $this->partitioned();
+
+        $tester = $this->runCommand(
+            $this->command($repository),
+            ['table' => 'transactions', '--force' => true, ...$options],
+        );
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString(
+            'The --before, --from/--to and --retain options each select what to drop: pass one of them.',
+            $tester->getDisplay()
+        );
+        self::assertSame([], $repository->executed);
+    }
+
+    public function test_an_unpartitioned_table_is_left_alone(): void
+    {
+        $repository = new FakePartitionRepository([], new TableInfo(name: 'transactions'));
 
         $tester = $this->runCommand(
             $this->command($repository),

@@ -163,6 +163,19 @@ abstract class PartitionCommand extends Command
         return $this->confirm($question, false);
     }
 
+    protected function unpartitioned(PartitionBuilder $builder): int
+    {
+        if ($builder->tableInfo() === null) {
+            $this->error("Table [{$builder->getTable()}] does not exist.");
+
+            return self::FAILURE;
+        }
+
+        $this->warn("Table [{$builder->getTable()}] is not partitioned.");
+
+        return self::SUCCESS;
+    }
+
     protected function formatBytes(int $bytes): string
     {
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];

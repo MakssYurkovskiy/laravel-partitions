@@ -236,6 +236,7 @@ class BuilderForOptionsTest extends CommandTestCase
             'a padded --chunk' => ['chunk', ' 4'],
             'a fraction for --future' => ['future', '1.5'],
             'a negative --future' => ['future', '-1'],
+            'a --future too long for an integer' => ['future', '99999999999999999999'],
         ];
     }
 

@@ -10,6 +10,7 @@ use Yurkovskiy\Partitions\Console\ListPartitionsCommand;
 use Yurkovskiy\Partitions\Exceptions\ExpressionMismatchException;
 use Yurkovskiy\Partitions\Exceptions\StrategyMismatchException;
 use Yurkovskiy\Partitions\PartitionManager;
+use Yurkovskiy\Partitions\Schema\TableInfo;
 use Yurkovskiy\Partitions\Tests\Support\CommandTestCase;
 use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
 
@@ -46,10 +47,19 @@ class ListPartitionsCommandTest extends CommandTestCase
         ], expression: 'to_days(`created_at`)');
     }
 
+    public function test_a_table_that_does_not_exist_is_not_called_unpartitioned(): void
+    {
+        $tester = $this->runCommand($this->command(new FakePartitionRepository), ['table' => 'transactoins']);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Table [transactoins] does not exist.', $tester->getDisplay());
+        self::assertStringNotContainsString('is not partitioned', $tester->getDisplay());
+    }
+
     public function test_an_unpartitioned_table_is_reported_as_such(): void
     {
         $tester = $this->runCommand(
-            $this->command(new FakePartitionRepository),
+            $this->command(new FakePartitionRepository([], new TableInfo(name: 'transactions'))),
             ['table' => 'transactions', '--column' => 'created_at'],
         );
 
