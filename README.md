@@ -165,7 +165,7 @@ and the `information_schema` lookups carry the prefix.
 | `syncChunk(?int $size)` | Partitions per statement that adds them (default `null`, all in one statement; `0` means the same). A size of N splits the additions into statements of N partitions each. Every `REORGANIZE` rewrites what is still in `pMax`, so splitting trades extra work for recoverability, see [filling a long gap](#filling-a-long-gap). |
 | `fillGaps(bool $fill = true)` | Start from the last covered period instead of today, so periods a table skipped while unattended are created too (default on). With `retain()` set, the skipped periods retention has already expired are not created: filling starts at the retention cutoff. An explicit `from()` is not moved back, but while gap filling is on the periods it skips are warned about; with `fillGaps(false)` the gap is left on purpose and nothing is said. |
 | `maxGaps(?int $gaps)` | How many skipped periods one run fills, oldest first (default 12). Only the periods before the current one count: the current period, the look-ahead of `future()` and an explicit `to()` ahead of today are never cut short, but they wait for a later run while more periods were skipped than one run fills — a partition cannot be added below an existing one. `null` or `0` lifts the limit; `pending()` is what the next `sync()` adds, `deferred()` what is left for a later run; `plan()` returns both from one pass over the table. |
-| `dryRun(bool $dryRun = true)` | Build the SQL, execute nothing. The table is still read, so `create()` and `removePartitioning()` throw in a dry run wherever they would throw for real. |
+| `dryRun(bool $dryRun = true)` | Build the SQL, execute nothing. The table is still read and, with `verifyTimezone()`, the session timezone is still checked, so a dry run throws wherever the real run would before its first statement. |
 
 ### Operations
 
@@ -252,7 +252,8 @@ asks the server for `UNIX_TIMESTAMP(?)` of the current time and of every boundar
 written, and refuses the DDL when any of them reads differently. Checking the boundaries themselves
 catches a session zone that agrees today and parts ways after a DST change — `UTC` against
 `Europe/London` in winter. A datetime the server already confirmed is not asked again on the same
-builder. A `partitionByRange()` in a migration is checked the same way when it compiles, in
+builder. A dry run asks the same question and throws the same `TimezoneMismatchException`, so
+`--dry-run` shows a mismatch instead of a plan the real run would refuse. A `partitionByRange()` in a migration is checked the same way when it compiles, in
 `Schema::create()` and `Schema::table()` alike:
 
 ```

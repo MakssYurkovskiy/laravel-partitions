@@ -331,4 +331,23 @@ REORGANIZE PARTITION `pMax` INTO (
         self::assertStringContainsString('Dry run — nothing was executed.', $output);
         self::assertSame([], $repository->executed);
     }
+
+    public function test_a_dry_run_reports_the_session_timezone_a_real_run_would_refuse(): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250612' => '1749772800',
+            'p20250613' => '1749859200',
+            'pMax' => 'MAXVALUE',
+        ], expression: 'unix_timestamp(`created_at`)');
+        $repository->sessionTimezone = 'Etc/GMT-3';
+
+        $tester = $this->runCommand($this->command($repository, ['tables' => [
+            'transactions' => ['column' => 'created_at', 'expression' => 'unix_timestamp', 'timezone' => 'UTC', 'verify_timezone' => true, 'future' => 1],
+        ]]), ['--dry-run' => true]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('are computed in [UTC]', $tester->getDisplay());
+        self::assertCount(1, $repository->timestampQueries);
+        self::assertSame([], $repository->executed);
+    }
 }

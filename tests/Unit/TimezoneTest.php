@@ -483,14 +483,47 @@ class TimezoneTest extends TestCase
         $this->assertCount(1, $toDays->executed);
     }
 
-    public function test_a_dry_run_asks_the_server_nothing(): void
+    public function test_a_dry_run_stops_on_a_session_timezone_mismatch(): void
     {
         $this->pinNow('UTC');
 
         $repository = $this->repository(['pMax' => 'MAXVALUE']);
         $repository->sessionTimezone = 'Etc/GMT+1';
 
+        try {
+            $this->builder($repository)->timezone('UTC')->verifyTimezone()->dryRun()->sync();
+
+            $this->fail('A dry run accepted a session timezone one hour away.');
+        } catch (TimezoneMismatchException $exception) {
+            $this->assertStringContainsString('+60 minutes away', $exception->getMessage());
+        }
+
+        $this->assertSame([['2025-06-13 12:00:00', '2025-06-14 00:00:00', '2025-06-15 00:00:00']], $repository->timestampQueries);
+        $this->assertSame([], $repository->executed);
+    }
+
+    public function test_a_dry_run_asks_a_matching_session_the_same_question(): void
+    {
+        $this->pinNow('UTC');
+
+        $repository = $this->repository(['pMax' => 'MAXVALUE']);
+        $repository->sessionTimezone = 'UTC';
+
         $statements = $this->builder($repository)->timezone('UTC')->verifyTimezone()->dryRun()->sync();
+
+        $this->assertCount(1, $statements);
+        $this->assertSame([['2025-06-13 12:00:00', '2025-06-14 00:00:00', '2025-06-15 00:00:00']], $repository->timestampQueries);
+        $this->assertSame([], $repository->executed);
+    }
+
+    public function test_a_dry_run_without_verification_asks_the_server_nothing(): void
+    {
+        $this->pinNow('UTC');
+
+        $repository = $this->repository(['pMax' => 'MAXVALUE']);
+        $repository->sessionTimezone = 'Etc/GMT+1';
+
+        $statements = $this->builder($repository)->timezone('UTC')->dryRun()->sync();
 
         $this->assertCount(1, $statements);
         $this->assertSame([], $repository->timestampQueries);
