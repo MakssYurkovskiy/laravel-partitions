@@ -27,6 +27,7 @@ use Yurkovskiy\Partitions\Tests\Support\CountingDailyStrategy;
 use Yurkovskiy\Partitions\Tests\Support\FakeDispatcher;
 use Yurkovskiy\Partitions\Tests\Support\FakeLogger;
 use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
+use Yurkovskiy\Partitions\Tests\Support\StatefulPartitionRepository;
 
 class PartitionBuilderTest extends TestCase
 {
@@ -1573,6 +1574,83 @@ REORGANIZE PARTITION `pMax` INTO (
 )',
         ], $statements->all());
         $this->assertSame($statements->all(), $repository->executed);
+    }
+
+    public function test_a_retry_with_the_same_plan_sends_only_what_is_still_missing(): void
+    {
+        $repository = StatefulPartitionRepository::withPartitions(['p20250613' => '739781', 'pMax' => 'MAXVALUE']);
+        $events = new FakeDispatcher;
+
+        $builder = (new PartitionBuilder($repository, events: $events))
+            ->table('transactions')
+            ->daily('created_at')
+            ->future(3)
+            ->syncChunk(1);
+
+        $plan = $builder->plan();
+        $repository->failingStatement = 2;
+
+        try {
+            $builder->sync($plan);
+            $this->fail('sync() was expected to throw.');
+        } catch (RuntimeException) {
+        }
+
+        $this->assertSame(['p20250613', 'p20250614', 'pMax'], $repository->names());
+
+        $this->assertSame([['pMax', 'p20250615', 'pMax'], ['pMax', 'p20250616', 'pMax']], $this->partitionNames($builder->syncStatements($plan)));
+
+        $statements = $builder->sync($plan);
+
+        $this->assertSame([['pMax', 'p20250615', 'pMax'], ['pMax', 'p20250616', 'pMax']], $this->partitionNames($statements));
+        $this->assertSame(['p20250613', 'p20250614', 'p20250615', 'p20250616', 'pMax'], $repository->names());
+        $this->assertCount(1, $events->dispatched);
+        $this->assertInstanceOf(PartitionsCreated::class, $events->dispatched[0]);
+        $this->assertSame(['p20250615', 'p20250616'], $events->dispatched[0]->partitions);
+    }
+
+    public function test_another_builder_given_a_partly_applied_plan_sends_only_what_is_still_missing(): void
+    {
+        $repository = StatefulPartitionRepository::withPartitions(['p20250613' => '739781', 'pMax' => 'MAXVALUE']);
+
+        $configure = fn (): PartitionBuilder => $this->builder($repository)
+            ->table('transactions')
+            ->daily('created_at')
+            ->future(3)
+            ->syncChunk(1);
+
+        $plan = $configure()->plan();
+        $repository->failingStatement = 3;
+
+        try {
+            $configure()->maintain($plan);
+            $this->fail('maintain() was expected to throw.');
+        } catch (RuntimeException) {
+        }
+
+        $result = $configure()->maintain($plan);
+
+        $this->assertSame([['pMax', 'p20250616', 'pMax']], $this->partitionNames($result['added']));
+        $this->assertSame(['p20250613', 'p20250614', 'p20250615', 'p20250616', 'pMax'], $repository->names());
+    }
+
+    public function test_a_plan_that_is_already_applied_adds_nothing(): void
+    {
+        $repository = StatefulPartitionRepository::withPartitions(['p20250613' => '739781', 'pMax' => 'MAXVALUE']);
+        $events = new FakeDispatcher;
+
+        $builder = (new PartitionBuilder($repository, events: $events))
+            ->table('transactions')
+            ->daily('created_at')
+            ->future(2);
+
+        $plan = $builder->plan();
+        $builder->sync($plan);
+
+        $this->assertTrue($builder->sync($plan)->isEmpty());
+        $this->assertTrue($builder->syncStatements($plan)->isEmpty());
+        $this->assertCount(1, $repository->executed);
+        $this->assertCount(1, $events->dispatched);
     }
 
     public function test_creating_plans_the_partitions_once(): void
