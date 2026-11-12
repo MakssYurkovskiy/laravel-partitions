@@ -40,7 +40,7 @@ class DropPartitionsCommandTest extends CommandTestCase
         array $config = [],
         ?FakeDispatcher $events = null,
     ): DropPartitionsCommand {
-        return new DropPartitionsCommand(new PartitionManager($repository, $events, $config));
+        return $this->withManager(new DropPartitionsCommand, new PartitionManager($repository, $events, $config));
     }
 
     protected function partitioned(): FakePartitionRepository
@@ -400,7 +400,7 @@ class DropPartitionsCommandTest extends CommandTestCase
         ], expression: 'to_days(`created_at`)');
         $events = new FakeDispatcher;
 
-        $command = new class(new PartitionManager($repository, $events)) extends DropPartitionsCommand
+        $command = $this->withManager(new class extends DropPartitionsCommand
         {
             protected function confirmed(PartitionBuilder $builder, string $question): bool
             {
@@ -408,7 +408,7 @@ class DropPartitionsCommandTest extends CommandTestCase
 
                 return parent::confirmed($builder, $question);
             }
-        };
+        }, new PartitionManager($repository, $events));
 
         $tester = $this->runCommand(
             $command,

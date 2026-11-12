@@ -7,7 +7,9 @@ namespace Yurkovskiy\Partitions\Console;
 use Illuminate\Console\Command;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
+use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Output\OutputInterface;
 use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\PartitionManager;
 use Yurkovskiy\Partitions\Schema\PartitionExpression;
@@ -15,9 +17,13 @@ use Yurkovskiy\Partitions\Schema\PartitionPeriod;
 
 abstract class PartitionCommand extends Command
 {
-    public function __construct(protected PartitionManager $manager)
+    protected PartitionManager $manager;
+
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        parent::__construct();
+        $this->manager = $this->laravel->make(PartitionManager::class);
+
+        return parent::execute($input, $output);
     }
 
     protected function configure(): void

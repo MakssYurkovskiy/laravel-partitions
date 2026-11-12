@@ -35,7 +35,7 @@ class BuilderForOptionsTest extends CommandTestCase
      */
     protected function command(array $config = [], ?FakePartitionRepository $repository = null): AddPartitionsCommand
     {
-        return new AddPartitionsCommand(new PartitionManager(
+        return $this->withManager(new AddPartitionsCommand, new PartitionManager(
             $repository ?? new FakePartitionRepository,
             null,
             $config,
