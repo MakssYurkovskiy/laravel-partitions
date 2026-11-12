@@ -81,6 +81,13 @@ final class PartitionDefinition
         return $this;
     }
 
+    public function verifyTimezone(bool $verify = true): self
+    {
+        $this->builder->verifyTimezone($verify);
+
+        return $this;
+    }
+
     public function from(DateTimeInterface|string $date): self
     {
         $this->builder->from($date);

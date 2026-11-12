@@ -493,9 +493,19 @@ public function down(): void
 `partitionByRange($column)` returns a `PartitionDefinition` — the declarative half of the builder:
 `daily()` / `weekly()` / `monthly()` / `yearly()` / `strategy()`, `prefix()`, `usingToDays()` /
 `usingUnixTimestamp()` / `usingRangeColumns()` / `expression()`, `timezone()`, `from()` / `to()` /
-`between()` / `future()`, `withMaxPartition()` / `withoutMaxPartition()`, `tablespace()`,
-`replacePartitioning()`. The executing methods are deliberately **not** exposed: inside a `Schema::create` callback the table does not exist yet, so nothing may run
+`verifyTimezone()`, `between()` / `future()`, `withMaxPartition()` / `withoutMaxPartition()`,
+`tablespace()`, `replacePartitioning()`. The executing methods are deliberately **not** exposed: inside a `Schema::create` callback the table does not exist yet, so nothing may run
 there. With no range declared, the configured `future` is used (7 periods from today by default).
+
+The definition starts from `config/partitions.php`, the way `Partition::for()` does. A table with an
+entry under `tables` — matched by its `table`, or by the key when the entry names none — starts from
+that entry on top of the global settings: `strategy`, `expression`, `timezone`, `verify_timezone`,
+`prefix`, `max_partition`, `tablespace` and `future`. Any other table starts from the global settings
+alone. What the migration declares goes on top of both, and the column is always the one given to
+`partitionByRange()`. This is what keeps the boundaries a migration writes in line with the ones
+`partitions:run` adds later — a `timezone` set for the table only would otherwise be missing from
+the migration. An entry that names a connection, its own or its model's, is used on that connection
+only; an entry that names none is used wherever the migration runs.
 
 ### Editing an existing table
 
