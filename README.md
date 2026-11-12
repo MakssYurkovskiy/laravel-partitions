@@ -150,7 +150,7 @@ and the `information_schema` lookups carry the prefix.
 | `usingUnixTimestamp()` | `PARTITION BY RANGE (UNIX_TIMESTAMP(col))` — for `TIMESTAMP` and `DATETIME` columns. Its boundaries are instants, not calendar dates, see [Timezones](#timezones). |
 | `expression($expression)` | The same three by name — `to_days`, `unix_timestamp`, `columns`, read the same way as a strategy name: any letter case, surrounding whitespace ignored — or a `PartitionExpression` case. |
 | `timezone($zone)` | Timezone the `unix_timestamp` boundaries are computed in. Defaults to the connection's `timezone`, then to the application one. |
-| `verifyTimezone(bool $verify = true)` | Ask the server what it makes of a datetime literal before running DDL, instead of writing boundaries that are off by the difference. |
+| `verifyTimezone(bool $verify = true)` | Ask the server how it reads the boundaries before running DDL, instead of writing ones that are off by the difference. |
 | `tablespace(?string $tablespace)` | Adds `TABLESPACE = ...` to every generated partition. |
 | `withMaxPartition(bool\|string $max)` / `withoutMaxPartition()` | Catch-all `MAXVALUE` partition, `pMax` by default. `withoutMaxPartition()` describes the layout `create()` builds; on a table that already has one, `sync()` throws instead of quietly keeping it (see [below](#how-it-maps-to-mysql)). |
 
@@ -247,13 +247,17 @@ every builder, `tables.*.timezone` per table. `null` or an empty name counts as 
 `partitions.timezone`; `'timezone' => false` in the entry puts that one table back on the fallback. Both ends use the one zone, so a boundary read back
 from `information_schema` decodes to the date it was written for.
 
-`verifyTimezone()` (config `verify_timezone`, off by default) spends one `UNIX_TIMESTAMP(?)` query
-per operation and refuses the DDL when the server disagrees. A `partitionByRange()` in a migration is
-checked the same way when it compiles, in `Schema::create()` and `Schema::table()` alike:
+`verifyTimezone()` (config `verify_timezone`, off by default) spends one query before the DDL: it
+asks the server for `UNIX_TIMESTAMP(?)` of the current time and of every boundary about to be
+written, and refuses the DDL when any of them reads differently. Checking the boundaries themselves
+catches a session zone that agrees today and parts ways after a DST change — `UTC` against
+`Europe/London` in winter. A datetime the server already confirmed is not asked again on the same
+builder. A `partitionByRange()` in a migration is checked the same way when it compiles, in
+`Schema::create()` and `Schema::table()` alike:
 
 ```
 UNIX_TIMESTAMP boundaries for table [transactions] are computed in [Europe/Kyiv], but the connection
-reads datetimes +180 minutes away from it, so every boundary would be off by that much.
+reads [2025-06-14 00:00:00] +180 minutes away from it, so boundaries would be off by that much.
 ```
 
 ### Dates you pass in

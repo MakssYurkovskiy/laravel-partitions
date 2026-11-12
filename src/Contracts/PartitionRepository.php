@@ -21,7 +21,11 @@ interface PartitionRepository
 
     public function connectionTimezone(?string $connection): ?string;
 
-    public function unixTimestamp(?string $connection, string $datetime): ?int;
+    /**
+     * @param  list<string>  $datetimes
+     * @return array<string, int>
+     */
+    public function unixTimestamps(?string $connection, array $datetimes): array;
 
     public function statement(?string $connection, string $sql): bool;
 }

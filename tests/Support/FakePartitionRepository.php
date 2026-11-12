@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Yurkovskiy\Partitions\Tests\Support;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Support\Collection;
 use RuntimeException;
 use Yurkovskiy\Partitions\Contracts\PartitionRepository;
@@ -31,9 +33,9 @@ class FakePartitionRepository implements PartitionRepository
 
     public ?string $connectionTimezone = null;
 
-    public ?int $unixTimestamp = null;
+    public ?string $sessionTimezone = null;
 
-    /** @var array<int, string> */
+    /** @var array<int, list<string>> */
     public array $timestampQueries = [];
 
     public ?int $failingStatement = null;
@@ -92,11 +94,20 @@ class FakePartitionRepository implements PartitionRepository
         return $this->connectionTimezone;
     }
 
-    public function unixTimestamp(?string $connection, string $datetime): ?int
+    public function unixTimestamps(?string $connection, array $datetimes): array
     {
-        $this->timestampQueries[] = $datetime;
+        $this->timestampQueries[] = $datetimes;
 
-        return $this->unixTimestamp;
+        if ($this->sessionTimezone === null) {
+            return [];
+        }
+
+        $timezone = new DateTimeZone($this->sessionTimezone);
+
+        return array_combine($datetimes, array_map(
+            fn (string $datetime) => (new DateTimeImmutable($datetime, $timezone))->getTimestamp(),
+            $datetimes
+        ));
     }
 
     public function statement(?string $connection, string $sql): bool

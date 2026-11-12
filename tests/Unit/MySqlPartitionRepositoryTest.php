@@ -111,7 +111,7 @@ class MySqlPartitionRepositoryTest extends TestCase
             'tableInfo' => fn () => $repository->tableInfo(null, 'transactions'),
             'tablePrefix' => fn () => $repository->tablePrefix(null),
             'connectionTimezone' => fn () => $repository->connectionTimezone(null),
-            'unixTimestamp' => fn () => $repository->unixTimestamp(null, '2025-06-14 00:00:00'),
+            'unixTimestamps' => fn () => $repository->unixTimestamps(null, ['2025-06-14 00:00:00']),
             'statement' => fn () => $repository->statement(null, 'alter table `transactions` add partition (...)'),
         ];
 
@@ -198,22 +198,43 @@ class MySqlPartitionRepositoryTest extends TestCase
         $this->assertNull($this->repository(new RecordingConnection)->connectionTimezone(null));
     }
 
-    public function test_it_asks_the_server_what_a_datetime_literal_means(): void
+    public function test_it_asks_the_server_what_every_datetime_literal_means_in_one_query(): void
     {
-        $connection = (new RecordingConnection('testdb'))->returning([(object) ['epoch' => '1749848400']]);
+        $connection = (new RecordingConnection('testdb'))->returning([
+            (object) ['position' => 1, 'epoch' => '1749934800.000000'],
+            (object) ['position' => 0, 'epoch' => '1749848400.000000'],
+        ]);
 
-        $epoch = $this->repository($connection)->unixTimestamp(null, '2025-06-14 00:00:00');
+        $epochs = $this->repository($connection)->unixTimestamps(null, [
+            '2025-06-14 00:00:00',
+            '2025-06-15 00:00:00',
+            '2025-06-14 00:00:00',
+        ]);
 
-        $this->assertSame(1749848400, $epoch);
-        $this->assertSame('select unix_timestamp(?) as epoch', $connection->queries[0][0]);
-        $this->assertSame(['2025-06-14 00:00:00'], $connection->queries[0][1]);
+        $this->assertSame(['2025-06-15 00:00:00' => 1749934800, '2025-06-14 00:00:00' => 1749848400], $epochs);
+        $this->assertCount(1, $connection->queries);
+        $this->assertSame(
+            'select 0 as position, unix_timestamp(?) as epoch union all select 1 as position, unix_timestamp(?) as epoch',
+            $connection->queries[0][0]
+        );
+        $this->assertSame(['2025-06-14 00:00:00', '2025-06-15 00:00:00'], $connection->queries[0][1]);
     }
 
     public function test_a_server_that_answers_nothing_reports_no_timestamp(): void
     {
+        $silent = new RecordingConnection('testdb');
+        $vague = (new RecordingConnection('testdb'))->returning([['position' => 0, 'epoch' => null]]);
+
+        $this->assertSame([], $this->repository($silent)->unixTimestamps(null, ['2025-06-14 00:00:00']));
+        $this->assertSame([], $this->repository($vague)->unixTimestamps(null, ['2025-06-14 00:00:00']));
+    }
+
+    public function test_no_datetimes_cost_no_query(): void
+    {
         $connection = new RecordingConnection('testdb');
 
-        $this->assertNull($this->repository($connection)->unixTimestamp(null, '2025-06-14 00:00:00'));
+        $this->assertSame([], $this->repository($connection)->unixTimestamps(null, []));
+        $this->assertSame([], $connection->queries);
     }
 
     public function test_ddl_is_handed_to_the_connection_as_a_statement(): void

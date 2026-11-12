@@ -88,7 +88,10 @@ class PartitionBuilder
 
     protected bool $verifyTimezone = false;
 
-    protected bool $timezoneVerified = false;
+    /**
+     * @var array<string, true>
+     */
+    protected array $verifiedDatetimes = [];
 
     /**
      * @var Collection<int, PartitionInfo>|null
@@ -211,7 +214,7 @@ class PartitionBuilder
     {
         $this->timezone = $timezone === null || $timezone === '' ? null : $this->toTimezone($timezone);
         $this->resolvedTimezone = null;
-        $this->timezoneVerified = false;
+        $this->verifiedDatetimes = [];
 
         return $this;
     }
@@ -650,7 +653,7 @@ class PartitionBuilder
         $planned = $this->plannedPartitions();
         $statements = collect([$this->createStatementFor($planned)]);
 
-        $this->run($statements);
+        $this->run($statements, $planned);
 
         $this->fire(new PartitionsCreated(
             $this->getTable(),
@@ -678,7 +681,7 @@ class PartitionBuilder
 
         $gap = $this->gap();
 
-        $this->run($statements);
+        $this->run($statements, $plan->pending);
 
         if ($gap !== null) {
             $this->warn($gap->message(), $gap->toArray());
@@ -1112,14 +1115,19 @@ class PartitionBuilder
 
     /**
      * @param  Collection<int, string>  $statements
+     * @param  Collection<int, PendingPartition>|null  $writing
+     *
+     * @throws TimezoneMismatchException
      */
-    protected function run(Collection $statements): void
+    protected function run(Collection $statements, ?Collection $writing = null): void
     {
         if ($this->dryRun) {
             return;
         }
 
-        $this->assertTimezoneMatches();
+        if ($this->verifiesTimezone()) {
+            $this->assertSessionReads($writing ?? collect());
+        }
 
         try {
             $statements->each(fn (string $sql) => $this->repository->statement($this->getConnection(), $sql));
@@ -1130,7 +1138,7 @@ class PartitionBuilder
 
     protected function connectionChanged(): static
     {
-        $this->timezoneVerified = false;
+        $this->verifiedDatetimes = [];
 
         return $this->refresh();
     }
@@ -1153,26 +1161,60 @@ class PartitionBuilder
     }
 
     /**
+     * @throws PartitionException
+     */
+    public function assertTimezoneMatches(bool $planned = false): void
+    {
+        if ($this->verifiesTimezone()) {
+            $this->assertSessionReads($planned ? $this->plannedPartitions() : collect());
+        }
+    }
+
+    protected function verifiesTimezone(): bool
+    {
+        return $this->verifyTimezone && $this->expression === PartitionExpression::UnixTimestamp;
+    }
+
+    /**
+     * @param  Collection<int, PendingPartition>  $writing
+     *
      * @throws TimezoneMismatchException
      */
-    public function assertTimezoneMatches(): void
+    protected function assertSessionReads(Collection $writing): void
     {
-        if (! $this->verifyTimezone || $this->timezoneVerified || $this->expression !== PartitionExpression::UnixTimestamp) {
+        $expected = [];
+
+        if ($this->verifiedDatetimes === []) {
+            $reference = $this->now()->setTimezone($this->getTimezone());
+            $expected[$reference->format('Y-m-d H:i:s')] = $reference->getTimestamp();
+        }
+
+        foreach ($writing as $pending) {
+            $expected[$pending->upperBound->format('Y-m-d H:i:s')] = (int) $pending->boundary;
+        }
+
+        $expected = array_diff_key($expected, $this->verifiedDatetimes);
+
+        if ($expected === []) {
             return;
         }
 
-        $reference = $this->now()->setTimezone($this->getTimezone());
-        $session = $this->repository->unixTimestamp($this->getConnection(), $reference->format('Y-m-d H:i:s'));
+        $session = $this->repository->unixTimestamps($this->getConnection(), array_keys($expected));
 
-        if ($session !== null && $session !== $reference->getTimestamp()) {
-            throw new TimezoneMismatchException(
-                $this->getTable(),
-                $this->getTimezone()->getName(),
-                intdiv($session - $reference->getTimestamp(), 60)
-            );
+        foreach ($expected as $datetime => $epoch) {
+            $read = $session[$datetime] ?? null;
+
+            if ($read !== null && $read !== $epoch) {
+                throw new TimezoneMismatchException(
+                    $this->getTable(),
+                    $this->getTimezone()->getName(),
+                    $datetime,
+                    intdiv($read - $epoch, 60)
+                );
+            }
+
+            $this->verifiedDatetimes[$datetime] = true;
         }
-
-        $this->timezoneVerified = true;
     }
 
     protected function boundaryTimezone(): ?DateTimeZone
