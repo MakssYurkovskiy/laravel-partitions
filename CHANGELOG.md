@@ -2,6 +2,54 @@
 
 All notable changes to this package are documented here.
 
+## [0.1.3] - 2026-11-12
+
+Fixes from a review of 0.1.2, the first one made against real servers. Several of them turn a
+silent or half-done run into a refusal, so read "Changed" before upgrading.
+
+### Added
+
+- `tests/Integration`: the operations run against a server — every period and expression through
+  the builder and through migrations — and CI runs them on MySQL 8.0, MySQL 8.4 and MariaDB 11.4.
+  Without `PARTITIONS_DB_HOST` the suite is skipped.
+- `InvalidConfigValueException`, `DropsEveryPartitionException` and `TooManyPartitionsException`,
+  described under "Changed".
+- `PartitionBuilder::assertDroppable($partitions)`: the check `drop()` makes, for code that shows a
+  selection before dropping it.
+- `Partition::forTable()` is declared on the facade.
+
+### Changed
+
+- `future`, `retain`, `chunk`, `sync_chunk` and `max_gaps` in `config/partitions.php` take a whole
+  number, zero or above — an integer or a string of digits. Anything else — `false`, a word, a
+  negative number, a float — throws `InvalidConfigValueException` when the builder is made, instead
+  of being cast. `partitions:run` reports such a table as failed and maintains the rest.
+- `sync()`, `syncStatements()` and `maintain()` throw `NotPartitionedException` on a table that is
+  not partitioned, in a dry run too. They used to build an `ADD PARTITION` the server refused.
+- `drop()`, `dropBefore()`, `dropBetween()`, `dropStatements()` and `partitions:drop` throw
+  `DropsEveryPartitionException` when the selection is every partition the table has, before the
+  first statement.
+- When a statement of `drop()`, `truncate()` or a chunked `sync()` fails after others ran, the event
+  is dispatched for the statements that ran — their partitions and their SQL — before the exception
+  reaches the caller. It used not to be dispatched at all.
+- A range or a `future()` of more than 8192 periods throws `TooManyPartitionsException` before the
+  periods are walked.
+- `partitions:drop` takes one of `--before`, `--from`/`--to` and `--retain`; two together stop the
+  command. `--before` used to win without a word.
+- `partitions:list` and `partitions:drop` end with `Table [...] does not exist.` and a failure code
+  for a table the connection does not know, instead of calling it not partitioned.
+- A numeric option too long for an integer fails the command like any other malformed number.
+
+### Fixed
+
+- `'retain' => false` — like `'abc'`, `-5` or `[]` — was read as `retain(0)`, and the next
+  `partitions:run` dropped every complete period before the current one.
+- On a table without a `MAXVALUE` partition, `dropBefore()` or `partitions:drop --before` past the
+  last partition dropped all partitions but one and then failed on the last with MySQL error 1508.
+- A published config whose `schedule` array had no `on_one_server` key scheduled `partitions:run`
+  without `onOneServer()`, although the default is `true`.
+- `--future=99999999999999999999` hung the command instead of failing it.
+
 ## [0.1.2] - 2026-11-12
 
 Fixes from a review of 0.1.1. Several of them change what a configuration or a call does, so read
