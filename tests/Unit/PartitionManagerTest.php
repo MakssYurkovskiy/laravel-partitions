@@ -92,10 +92,10 @@ class PartitionManagerTest extends TestCase
         ], $repository)->newBuilder()->table('transactions')->daily('created_at')->createStatement();
 
         self::assertStringContainsString('PARTITION BY RANGE COLUMNS(`created_at`)', $sql);
-        self::assertStringContainsString("PARTITION `part20250613` VALUES LESS THAN ('2025-06-14') TABLESPACE = transactions_space", $sql);
+        self::assertStringContainsString("PARTITION `part20250613` VALUES LESS THAN ('2025-06-14') TABLESPACE = `transactions_space`", $sql);
         self::assertStringContainsString("PARTITION `part20250614` VALUES LESS THAN ('2025-06-15')", $sql);
         self::assertStringNotContainsString('part20250615', $sql);
-        self::assertStringContainsString('PARTITION `overflow` VALUES LESS THAN MAXVALUE TABLESPACE = transactions_space', $sql);
+        self::assertStringContainsString('PARTITION `overflow` VALUES LESS THAN MAXVALUE TABLESPACE = `transactions_space`', $sql);
         self::assertSame([['reports', 'transactions']], $repository->requested);
     }
 
@@ -225,7 +225,7 @@ class PartitionManagerTest extends TestCase
             'tables' => ['transactions' => ['tablespace' => null]],
         ])->for('transactions')->createStatement();
 
-        self::assertStringContainsString('TABLESPACE = transactions_space', $sql);
+        self::assertStringContainsString('TABLESPACE = `transactions_space`', $sql);
     }
 
     public function test_an_empty_retain_drops_nothing(): void
@@ -571,7 +571,7 @@ class PartitionManagerTest extends TestCase
         ]]], $repository)->for('transactions')->createStatement();
 
         self::assertStringContainsString('PARTITION BY RANGE COLUMNS(`processed_at`)', $sql);
-        self::assertStringContainsString("PARTITION `txn20250613` VALUES LESS THAN ('2025-06-14') TABLESPACE = transactions_space", $sql);
+        self::assertStringContainsString("PARTITION `txn20250613` VALUES LESS THAN ('2025-06-14') TABLESPACE = `transactions_space`", $sql);
         self::assertStringContainsString('PARTITION `overflow` VALUES LESS THAN MAXVALUE', $sql);
     }
 

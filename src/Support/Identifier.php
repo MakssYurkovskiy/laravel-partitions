@@ -13,8 +13,16 @@ final class Identifier
      */
     public static function quote(string $identifier): string
     {
-        return collect(explode('.', $identifier))
-            ->map(fn (string $part) => '`'.self::validate($part).'`')
+        return '`'.self::validate($identifier).'`';
+    }
+
+    /**
+     * @throws InvalidIdentifierException
+     */
+    public static function quoteTable(string $table): string
+    {
+        return collect(explode('.', $table))
+            ->map(fn (string $part) => self::quote($part))
             ->implode('.');
     }
 

@@ -151,7 +151,7 @@ and the `information_schema` lookups carry the prefix.
 | `expression($expression)` | The same three by name — `to_days`, `unix_timestamp`, `columns`, read the same way as a strategy name: any letter case, surrounding whitespace ignored — or a `PartitionExpression` case. |
 | `timezone($zone)` | Timezone the `unix_timestamp` boundaries are computed in. Defaults to the connection's `timezone`, then to the application one. |
 | `verifyTimezone(bool $verify = true)` | Ask the server how it reads the boundaries before running DDL, instead of writing ones that are off by the difference. |
-| `tablespace(?string $tablespace)` | Adds `TABLESPACE = ...` to every generated partition. |
+| `tablespace(?string $tablespace)` | Adds ``TABLESPACE = `...` `` to every generated partition. |
 | `withMaxPartition(bool\|string $max)` / `withoutMaxPartition()` | Catch-all `MAXVALUE` partition, `pMax` by default. `withoutMaxPartition()` describes the layout `create()` builds; on a table that already has one, `sync()` throws instead of quietly keeping it (see [below](#how-it-maps-to-mysql)). |
 
 ### Range and retention
@@ -740,8 +740,9 @@ way `WeeklyStrategy` does.
   identifiers cannot be bound as query parameters, so they are checked instead. The pattern is
   deliberately narrower than MySQL's own rules — a name that is legal only while quoted, such as
   `my-table`, `order date` or a non-ASCII one, is rejected with an `InvalidIdentifierException`
-  instead of being passed into DDL. Qualified names are split on the dot and each part checked separately, so
-  `reporting.transactions` is fine.
+  instead of being passed into DDL. Only a table name may be qualified: it is split on the dot and
+  each part checked separately, so `reporting.transactions` is fine. A column, partition or
+  tablespace name with a dot in it, such as `p.max`, is rejected like any other.
 - Subpartitions are folded away when the partition list is read: `information_schema.PARTITIONS`
   holds one row per *sub*partition, so a subpartitioned table repeats every `PARTITION_NAME` and
   splits its row estimate and its size across those rows. The package reports one entry per

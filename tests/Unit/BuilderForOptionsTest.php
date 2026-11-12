@@ -81,7 +81,7 @@ class BuilderForOptionsTest extends CommandTestCase
         ], repository: $repository);
 
         self::assertStringContainsString('PARTITION BY RANGE COLUMNS(`processed_at`)', $sql);
-        self::assertStringContainsString("PARTITION `txn202506` VALUES LESS THAN ('2025-07-01') TABLESPACE = transactions_space", $sql);
+        self::assertStringContainsString("PARTITION `txn202506` VALUES LESS THAN ('2025-07-01') TABLESPACE = `transactions_space`", $sql);
         self::assertSame([['archive', 'transactions']], $repository->requested);
     }
 
@@ -163,7 +163,7 @@ class BuilderForOptionsTest extends CommandTestCase
         ]]], $repository);
 
         self::assertStringContainsString('PARTITION BY RANGE (TO_DAYS(`settled_at`))', $sql);
-        self::assertStringContainsString('PARTITION `y2025` VALUES LESS THAN (739982) TABLESPACE = other_space', $sql);
+        self::assertStringContainsString('PARTITION `y2025` VALUES LESS THAN (739982) TABLESPACE = `other_space`', $sql);
         self::assertStringNotContainsString('transactions_space', $sql);
         self::assertSame([['archive', 'transactions']], $repository->requested);
     }
@@ -207,7 +207,7 @@ class BuilderForOptionsTest extends CommandTestCase
 
         self::assertStringContainsString('PARTITION BY RANGE (TO_DAYS(`processed_at`))', $sql);
         self::assertStringContainsString(
-            'PARTITION `txn202506` VALUES LESS THAN (739798) TABLESPACE = transactions_space',
+            'PARTITION `txn202506` VALUES LESS THAN (739798) TABLESPACE = `transactions_space`',
             $sql
         );
     }
