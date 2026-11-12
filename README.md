@@ -5,7 +5,13 @@
 [![PHP Version](https://img.shields.io/packagist/dependency-v/yurkovskiy/laravel-partitions/php)](https://packagist.org/packages/yurkovskiy/laravel-partitions)
 [![License](https://img.shields.io/packagist/l/yurkovskiy/laravel-partitions)](LICENSE)
 
-Flexible MySQL partition management for Laravel.
+Built for MySQL and MariaDB: RANGE partitioning wired straight into your migrations and the Schema
+`Blueprint`, not a separate service class you call by hand. It also handles the things that quietly
+break in production — [timezone drift](docs/timezones.md) in `UNIX_TIMESTAMP` boundaries,
+[`REORGANIZE PARTITION pMax` rewriting your whole backlog](docs/commands.md#filling-a-long-gap), and
+[retention and gap filling fighting each other](docs/commands.md#a-table-left-longer-than-its-retention).
+
+![Terminal recording: partitions:add --dry-run lists the nine partitions it would add and the REORGANIZE PARTITION statement; partitions:drop --retain=90 --dry-run lists the nine partitions it would drop, the rows and disk space they hold, and the DROP PARTITION statements. Nothing is executed.](art/partitions.gif)
 
 Describe how a table is sliced in time, and the package takes care of the DDL: partitioning an
 existing table, pre-creating the upcoming partitions, dropping the expired ones, and reporting what
@@ -35,8 +41,25 @@ Partition::table('transactions')
     ->maintain();               // add what is missing, prune what expired
 ```
 
+## Why
+
+Rows expire. `DELETE FROM transactions WHERE created_at < ?` on a table of hundreds of millions of
+rows runs for a long time and holds locks while it does; `ALTER TABLE ... DROP PARTITION` is instant,
+whatever the partition holds. The price is that partitions have to exist before the rows arrive and
+be dropped on a schedule — and a job that stopped quietly means rows piling up in the `MAXVALUE`
+partition, or an insert error on a table without one.
+
+| | By hand | With this package |
+| --- | --- | --- |
+| Declaring the layout | `DB::statement('ALTER TABLE ... PARTITION BY RANGE ...')` in a migration, boundaries computed by you | `$table->partitionByRange('created_at')->daily()->future(30)` on the `Blueprint` ([Migrations](docs/migrations.md)) |
+| Staying ahead and pruning | A command and a cron entry of your own, per table | `partitions:run` over the table catalogue, or `maintain()` from code; with `PARTITIONS_SCHEDULE_ENABLED=true` it schedules itself ([Configuration](docs/configuration.md)) |
+| Seeing what will run | Nothing until it runs | `--dry-run` and `dryRun()`: the statements, and for a drop the partitions, the rows and the disk space they hold, with nothing executed |
+| Before the DDL | Whatever MySQL says afterwards | The table is checked against the layout: another expression, column or period is refused, so is a layout past 8192 partitions and a session timezone that would move the boundaries ([Errors](docs/events-and-errors.md#errors)) |
+| Tested against | Your staging server | CI runs the suite on MySQL 8.0, MySQL 8.4 and MariaDB 11.4 ([Tests](docs/tests.md)) |
+
 ## Contents
 
+- [Why](#why)
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Artisan commands](#artisan-commands)

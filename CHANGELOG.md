@@ -11,6 +11,11 @@ All notable changes to this package are documented here.
   `app/Services/Partition` and the tests each have a page there. The README keeps the install, the
   quick start, the commands at a glance and a list of those pages. `docs/` is left out of the
   Composer archive.
+- The README opens with what the package is built for and what it handles, and a `Why` section
+  after the examples sets the package against doing the same by hand.
+- A recording of `partitions:add --dry-run` and `partitions:drop --retain=90 --dry-run` sits under
+  the opening paragraph. `art/` holds the GIF and what re-records it — a `vhs` tape, the seed data
+  and a script that runs both against MySQL in Docker — and is left out of the Composer archive.
 
 ### Fixed
 
