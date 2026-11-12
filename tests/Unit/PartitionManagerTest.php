@@ -189,6 +189,44 @@ class PartitionManagerTest extends TestCase
         self::assertSame('Europe/Kyiv', $builder->getTimezone()->getName());
     }
 
+    public function test_an_unset_table_timezone_keeps_the_global_one(): void
+    {
+        $repository = new FakePartitionRepository;
+        $repository->connectionTimezone = 'Europe/Kyiv';
+
+        $builder = $this->manager([
+            'timezone' => 'UTC',
+            'future' => 0,
+            'tables' => ['transactions' => ['expression' => 'unix_timestamp', 'timezone' => null]],
+        ], $repository)->for('transactions');
+
+        self::assertSame('UTC', $builder->getTimezone()->getName());
+        self::assertStringContainsString('VALUES LESS THAN (1749859200)', $builder->createStatement());
+    }
+
+    public function test_a_table_timezone_of_false_turns_the_global_one_off(): void
+    {
+        $repository = new FakePartitionRepository;
+        $repository->connectionTimezone = 'Europe/Kyiv';
+
+        $builder = $this->manager([
+            'timezone' => 'UTC',
+            'tables' => ['transactions' => ['expression' => 'unix_timestamp', 'timezone' => false]],
+        ], $repository)->for('transactions');
+
+        self::assertSame('Europe/Kyiv', $builder->getTimezone()->getName());
+    }
+
+    public function test_an_unset_table_tablespace_keeps_the_global_one(): void
+    {
+        $sql = $this->manager([
+            'tablespace' => 'transactions_space',
+            'tables' => ['transactions' => ['tablespace' => null]],
+        ])->for('transactions')->createStatement();
+
+        self::assertStringContainsString('TABLESPACE = transactions_space', $sql);
+    }
+
     public function test_an_empty_retain_drops_nothing(): void
     {
         $repository = $this->dailyRepository();
@@ -213,7 +251,7 @@ class PartitionManagerTest extends TestCase
             yield "empty {$key}" => [$key, ''];
         }
 
-        foreach (['prefix', 'max_partition', 'expression', 'verify_timezone', 'future', 'fill_gaps'] as $key) {
+        foreach (['prefix', 'max_partition', 'tablespace', 'expression', 'timezone', 'verify_timezone', 'future', 'fill_gaps', 'connection'] as $key) {
             yield "null {$key}" => [$key, null];
         }
     }
@@ -241,7 +279,7 @@ class PartitionManagerTest extends TestCase
             yield "empty {$key}" => [$key, ''];
         }
 
-        foreach (['table', 'strategy', 'column', 'prefix', 'max_partition', 'expression', 'verify_timezone', 'future', 'fill_gaps'] as $key) {
+        foreach (['table', 'strategy', 'column', 'prefix', 'max_partition', 'tablespace', 'expression', 'timezone', 'verify_timezone', 'future', 'fill_gaps', 'connection'] as $key) {
             yield "null {$key}" => [$key, null];
         }
     }
@@ -545,7 +583,7 @@ class PartitionManagerTest extends TestCase
             'future' => 0,
             'tables' => ['transactions' => [
                 'prefix' => 'p',
-                'tablespace' => null,
+                'tablespace' => false,
                 'max_partition' => false,
             ]],
         ]);

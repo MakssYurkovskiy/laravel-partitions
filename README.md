@@ -243,7 +243,8 @@ Partition::table('transactions')->monthly('created_at')
 `timezone()` falls back to the connection's own `timezone` (`database.connections.*.timezone` — what
 Laravel puts the session in) and then to the application timezone; `partitions.timezone` sets it for
 every builder, `tables.*.timezone` per table. `null` or an empty name counts as not set, so
-`PARTITIONS_TIMEZONE=` falls back the same way. Both ends use the one zone, so a boundary read back
+`PARTITIONS_TIMEZONE=` falls back the same way and a table entry without a zone of its own keeps
+`partitions.timezone`; `'timezone' => false` in the entry puts that one table back on the fallback. Both ends use the one zone, so a boundary read back
 from `information_schema` decodes to the date it was written for.
 
 `verifyTimezone()` (config `verify_timezone`, off by default) spends one `UNIX_TIMESTAMP(?)` query
@@ -432,10 +433,11 @@ nothing.
 An empty value counts as a key that is not there, for every setting, globally and per table. With
 `'retain' => env('TRANSACTIONS_RETAIN', 90)` and a bare `TRANSACTIONS_RETAIN=` in `.env`, `env()`
 returns `''` rather than `90`, and the table is not pruned at all, as if `retain` were not given —
-never `retain(0)`. An empty table setting keeps the global one. `null` reads the same way for the
-settings it has no meaning for: `table`, `strategy`, `column`, `prefix`, `expression`,
-`max_partition`, `future`, `fill_gaps` and `verify_timezone`. For `retain`, `chunk`, `sync_chunk` and
-`max_gaps` it keeps the meaning listed in the config file: no pruning, one statement, no limit.
+never `retain(0)`. An empty table setting keeps the global one. `null` reads the same way for every
+setting but four: for `retain`, `chunk`, `sync_chunk` and `max_gaps` it keeps the meaning listed in
+the config file — no pruning, one statement, no limit. So `'timezone' => env('TRANSACTIONS_TZ')`
+without the variable leaves the table on `partitions.timezone`. What turns a global `tablespace`,
+`timezone` or `max_partition` off for one table is `false`.
 
 Configured tables are addressable by key:
 
