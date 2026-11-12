@@ -2,11 +2,135 @@
 
 All notable changes to this package are documented here.
 
+## [0.1.2] - 2026-11-12
+
+Fixes from a review of 0.1.1. Several of them change what a configuration or a call does, so read
+"Changed" before upgrading.
+
+### Added
+
+- `InvalidDateException`: a date string that is blank or that PHP cannot read is refused by `from()`,
+  `to()`, `between()`, `has()`, `partitionNameFor()`, `inRange()`, `outdated()`, `dropBefore()`,
+  `dropBetween()`, the same methods of a migration definition and the `--from`, `--to` and `--before`
+  options. Carbon's exception is kept as `getPrevious()`.
+- `InvalidTableConfigException`: an entry under `tables` that is not an array of settings is
+  reported by `Partition::for()`, `configured()`, the commands and a migration of that table.
+- `PartitionDefinition::verifyTimezone()`, so a migration can turn the session check on or off.
+- `PartitionManager::forTable($table, $connection)`: the builder of the `tables` entry whose table
+  matches, or one built from the global settings when there is none.
+- `outdatedAfter(PartitionPlan $plan)`: the partitions `maintain($plan)` drops.
+- `'timezone' => false` and `'tablespace' => false` in a table entry turn the global value off for
+  that table, the way `'max_partition' => false` does.
+
+### Changed
+
+- A config value of `''` counts as a missing key everywhere, and so does `null` for every key except
+  `retain`, `chunk`, `sync_chunk` and `max_gaps`, where `null` keeps its meaning. Two settings read
+  differently now: `'max_partition' => null` keeps the default `pMax`, and `'tablespace' => null` in
+  a table entry keeps the global tablespace. Use `false` for both.
+- `partitionByRange()` in a migration starts from the `tables` entry of its table — `strategy`,
+  `expression`, `timezone`, `verify_timezone`, `prefix`, `max_partition`, `tablespace`, `future` —
+  and what the migration declares goes on top. An entry that names a connection is used on that
+  connection only. A table without an entry is built from the global settings, as before.
+- `createStatement()`, `partitionByClause()`, `create()` and a migration write the configured name of
+  the `MAXVALUE` partition and no longer read the table for it. A migration with
+  `replacePartitioning()` and no `withMaxPartition()` used to adopt the name the table already had;
+  it now writes the configured one. `sync()` still re-creates the partition under its existing name.
+- `max_gaps` counts only the periods skipped before the current one. The current period, the
+  `future()` look-ahead and an explicit `to()` ahead of today are never cut short by it. While more
+  periods are skipped than one run fills, everything after them is deferred with them, and
+  `partitions:add` reports "N partitions are left for the next run".
+- With `retain()` set and no `from()`, gap filling starts at the retention cutoff when the last
+  partition is older than that. `outdated()` without a date, `prune()` and `partitions:drop --retain`
+  never select the last partition with a boundary, so the next run has one to continue from.
+- A column, partition or tablespace name with a dot throws `InvalidIdentifierException`; only a table
+  name may be qualified. The tablespace is back-quoted in the DDL.
+- Every read — the partition list, the table lookup, the timezone probe — goes to the write
+  connection.
+- `PartitionManager` is bound, not shared: `app(PartitionManager::class)` and `app('partitions')`
+  return a new instance each time, and the `Partition` facade does not cache it. `PartitionCommand`
+  has no constructor; `$this->manager` is set before `handle()`.
+- `PartitionRepository::unixTimestamp()` is replaced by
+  `unixTimestamps(?string $connection, array $datetimes): array`, and
+  `TimezoneMismatchException::__construct()` takes the datetime as a third argument. Both matter
+  only to a custom repository or to code that builds the exception itself.
+- The dates the builder hands to a strategy, and `start` and `upperBound` of a `PendingPartition`,
+  are in UTC with the wall clock of the calendar date they stand for. They used to be in the
+  application timezone.
+- `partitions:run` exits with a failure code for a configured table that is not partitioned or does
+  not exist, and says which of the two it is.
+- A table partitioned by `KEY`, `LINEAR KEY`, `HASH`, `LINEAR HASH` or `LIST` is refused with
+  `ExpressionMismatchException` whether or not it reports a partitioning expression.
+
+### Fixed
+
+- A blank variable in `.env` turned `'retain' => env('TRANSACTIONS_RETAIN', 90)` into `retain(0)`,
+  and the next `partitions:run` dropped every complete period before today. Other keys broke the
+  same way: a blank `future` became `0`, a blank `chunk` or `max_gaps` lifted the limit, a blank
+  `prefix` or `max_partition` produced empty names.
+- A table left unattended for longer than its retention lost every bounded partition on the next
+  `maintain()`: the oldest skipped periods were created and pruned in the same run, the following
+  run started at today, and the rows since the gap stayed in one partition. A dry run and the
+  Dropped column of `partitions:run` reported fewer drops than the real run made.
+- `'timezone' => null` or `'tablespace' => null` in a table entry reset the global value instead of
+  keeping it, so `unix_timestamp` boundaries of that table moved to the application timezone.
+- A migration ignored `tables.*.timezone` and `tables.*.verify_timezone`, so it wrote
+  `unix_timestamp` boundaries in another zone than `Partition::for()` used for the same table later.
+- `verifyTimezone()` compared the session with the current time only. A session zone with the same
+  offset today and other DST rules passed, and boundaries after the next clock change were written
+  an hour off. The server is now asked about every boundary the statement writes, in one query, and
+  the exception names the datetime that reads differently.
+- With `verify_timezone` on, a dry run returned before the session timezone was checked, so
+  `--dry-run` printed a clean plan on a connection where the real run throws.
+- On a connection split into `read` and `write` hosts a lagging replica made a retry send a partition
+  that already existed, and let `create()` rebuild a table that was already partitioned.
+- Where a clock change skips midnight — `America/Santiago`, `Africa/Cairo`, `Asia/Beirut`,
+  `America/Havana` — a `unix_timestamp` partition ended at 01:00 instead of midnight, so the rows of
+  that hour were dropped a day early. This held both for the period that starts on the skipped
+  midnight and, when `timezone()` names another zone than the application's, for the period before
+  it. Partitions already written with the late boundary are left as they are.
+- A `PartitionPlan` given to `sync()`, `syncStatements()` or `maintain()` was sent as it was, so a
+  retry after a partial failure sent the partitions that had already been created. The plan is now
+  filtered against the table, and `PartitionsCreated` lists only what was added.
+- An entry under `tables` that is not an array was skipped silently: `partitions:run` maintained the
+  rest and exited with 0, and the other commands took the key for a raw table name.
+- `withMaxPartition('p.max')` and `daily('x.created_at')` compiled to DDL MySQL rejects; inside
+  `Schema::create()` that left the table created and not partitioned. The name is now refused before
+  any statement runs.
+- `createStatement()` and `partitionByClause()` queried `information_schema`, although building that
+  SQL needs no connection, and a migration that replaced the partitioning of a table wrote the old
+  `MAXVALUE` name while `migrate --pretend` showed the new one.
+- `plan()` cut the look-ahead at `max_gaps`: on a table that was up to date,
+  `partitions:add --future=30` added 12 partitions and reported skipped periods that did not exist.
+- `Event::fake()`, `Log::spy()`, a `PartitionRepository` bound to a fake and config set at runtime
+  were ignored by `Partition::` and by the commands once Artisan had been loaded, which is every
+  test that uses `RefreshDatabase`.
+- A date string Carbon could not parse left the package as `InvalidFormatException`, not as a
+  `PartitionException`. A blank string was read as "now", so `dropBefore('')` dropped every
+  partition before today.
+- A table partitioned by `KEY()` reached MySQL with `RANGE` statements and failed with a raw MySQL
+  error.
+
 ## [0.1.1] - 2026-11-11
 
-The first release. The package is extracted from the `app/Services/Partition` namespace of an
-application and rebuilt as a standalone partition layer for MySQL and MariaDB `RANGE` partitioning by
-date.
+Documentation only; the code is the same as in 0.1.0.
+
+### Changed
+
+- The README no longer has a section on a third-party package, and the configuration example no
+  longer points at it.
+
+### Fixed
+
+- The PHP version badge in the README renders again: it used a shields.io endpoint that no longer
+  exists.
+
+## [0.1.0] - 2026-11-11 [YANKED]
+
+The first release, replaced by 0.1.1 half an hour after it was tagged. The package is extracted from
+the `app/Services/Partition` namespace of an application and rebuilt as a standalone partition layer
+for MySQL and MariaDB `RANGE` partitioning by date. What differs from that namespace is listed in the
+README, under [Coming from `app/Services/Partition`](README.md#coming-from-appservicespartition).
 
 ### Added
 
@@ -35,8 +159,9 @@ date.
 - Daily, weekly (ISO week), monthly and yearly periods, as the `PartitionPeriod` enum (`Daily`,
   `Weekly`, `Monthly`, `Yearly`) or by name: `daily`, its unit `day` or its initial `d`, in any letter
   case and with surrounding whitespace ignored. Custom periods through the `PartitionStrategy`
-  contract or `AbstractStrategy`, which needs `start()`, `next()` and `format()` only. A partition
-  name holds `[A-Za-z0-9_$]`, and a name is read back only when it formats back to itself.
+  contract or `AbstractStrategy`, which needs `start()`, `next()` and `format()`, plus `decode()`
+  when the name format is one `createFromFormat()` cannot read back, such as the ISO week `oW`. A
+  partition name holds `[A-Za-z0-9_$]`, and a name is read back only when it formats back to itself.
 - Three partitioning expressions: `RANGE (TO_DAYS(col))` (the default), `RANGE COLUMNS(col)` and
   `RANGE (UNIX_TIMESTAMP(col))` — `usingToDays()`, `usingRangeColumns()`, `usingUnixTimestamp()`, or
   `expression()` with a `PartitionExpression` case or its name.
@@ -85,8 +210,8 @@ date.
   `--max-gaps`, `--create`, `--force` and `--dry-run`. A table that is not partitioned yet is
   partitioned only with `--create`, after the rows and disk space the rebuild moves are printed and
   confirmed; without the flag the command stops, in a dry run and a non-interactive run too.
-  Without `--from` a run continues right after the last partition, and `--future` is counted from
-  today.
+  Without `--from` a run continues right after the last partition — or starts at today when
+  `fill_gaps` is off — and `--future` is counted from today.
 - `partitions:drop {table}` with `--before`, `--from` and `--to` (both ends, inclusive and
   order-insensitive), `--retain`, `--chunk`, `--force` and `--dry-run`. It prints the partitions, the
   estimated rows and the disk space it is about to delete, asks for confirmation and drops exactly
@@ -118,8 +243,10 @@ date.
   after a successful run only — never in a dry run, never when there was nothing to do.
 - `sync()` logs a warning, with the facts as context, when an explicit `from()` skips periods after
   the last partition, so their rows land in the first partition created; `partitions:add` prints the
-  same sentence before the statements. `gap()` returns it beforehand as a `PartitionGap`. The
-  logger is the application's `Psr\Log\LoggerInterface`.
+  same sentence before the statements. Nothing is logged in a dry run, though the command still
+  prints it, and with `fill_gaps` off the gap is left on purpose and neither says anything. `gap()`
+  returns the warning beforehand as a `PartitionGap`. The logger is the application's
+  `Psr\Log\LoggerInterface`.
 
 #### Exceptions
 
@@ -141,7 +268,8 @@ date.
   refuses to reorganise an existing `MAXVALUE` partition when the builder is configured without one.
 - A `from()` past the end of the range throws `InvalidRangeException` instead of describing a range
   that covers no period.
-- Table, column, partition and tablespace names are validated against `[A-Za-z0-9_$]` and quoted.
+- Table, column, partition and tablespace names are validated against `[A-Za-z0-9_$]`, and all but
+  the tablespace are quoted.
 - Every read and statement checks the connection's driver and throws `UnsupportedDriverException`
   on anything but MySQL or MariaDB.
 - A subpartitioned table is read as one entry per partition, with the subpartition rows and sizes
@@ -159,26 +287,3 @@ date.
   `composer validate --strict` job, PHPStan with Larastan at level 8 and Pint with the `laravel`
   preset — available locally as `composer test`, `composer analyse`, `composer lint` and
   `composer fix`.
-
-### Compared to `app/Services/Partition`
-
-- `->definition()` is `createStatement()`, `->generate()` is `missing()` or `syncStatements()`,
-  `PartitionHelper::executeReorganize()` is `sync()`, and `--type=day` on the commands is
-  `--strategy=daily`.
-- `dropBetween()` executes the drop; `dryRun()->dropBetween()` returns the SQL it used to return.
-- `REORGANIZE PARTITION pMax` re-creates the `MAXVALUE` partition inside the statement, so adding
-  partitions no longer fails on a table that has one, and no longer emits `pMax` twice on a table
-  that has none.
-- Partition names are decoded with the active strategy and verified by re-encoding them, instead of
-  stripping every `p` from the string, so one strategy cannot claim another one's partitions and
-  unrelated partitions are never dropped.
-- Monthly names are no longer built with `Carbon::createFromFormat('Ym', ...)`, which inherited the
-  current day of the month and shifted the name on long months.
-- Partitions whose range falls below the highest existing boundary are skipped instead of being sent
-  to MySQL, which would reject the whole statement.
-- Existing partitions are ordered by `PARTITION_ORDINAL_POSITION` instead of the textual
-  `PARTITION_DESCRIPTION`.
-- Failing DDL throws instead of being swallowed and reported as `false`.
-- `partitions:drop` asks for confirmation and reports the rows and disk space it is about to delete.
-- Identifiers are validated and quoted, and boundaries are computed in PHP, so building the SQL
-  needs no round trip to the database.
