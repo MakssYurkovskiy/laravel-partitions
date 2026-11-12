@@ -610,13 +610,13 @@ class PartitionBuilder
         return $this->grammar->partitionByClause(
             $this->column,
             $this->expression,
-            $this->definitionsFor($this->plannedPartitions(), withMax: $this->withMaxPartition)
+            $this->definitionsFor($this->layout(), withMax: $this->withMaxPartition)
         );
     }
 
     public function createStatement(): string
     {
-        return $this->createStatementFor($this->plannedPartitions());
+        return $this->createStatementFor($this->layout());
     }
 
     /**
@@ -634,6 +634,8 @@ class PartitionBuilder
         if ($pending->isEmpty()) {
             return collect();
         }
+
+        $this->assertFits($pending);
 
         $table = $this->prefixedTable();
         $maxPartition = $this->existingMaxPartition();
@@ -692,7 +694,7 @@ class PartitionBuilder
             throw AlreadyPartitionedException::forCreate($this->getTable());
         }
 
-        $planned = $this->plannedPartitions();
+        $planned = $this->layout();
         $statements = collect([$this->createStatementFor($planned)]);
 
         $this->run($statements, $planned);
@@ -906,6 +908,47 @@ class PartitionBuilder
         }
 
         return $planned;
+    }
+
+    /**
+     * @return Collection<int, PendingPartition>
+     *
+     * @throws InvalidRangeException
+     * @throws TooManyPartitionsException
+     */
+    protected function layout(): Collection
+    {
+        $planned = $this->plannedPartitions();
+
+        if ($this->withMaxPartition && $planned->count() === self::MAX_PARTITIONS) {
+            throw TooManyPartitionsException::forMaxPartition(
+                $this->getTable(),
+                $this->resolveFrom()->toDateString(),
+                $this->resolveTo()->toDateString(),
+                self::MAX_PARTITIONS
+            );
+        }
+
+        return $planned;
+    }
+
+    /**
+     * @param  Collection<int, PendingPartition>  $pending
+     *
+     * @throws TooManyPartitionsException
+     */
+    protected function assertFits(Collection $pending): void
+    {
+        $existing = $this->existing()->count();
+
+        if ($existing + $pending->count() > self::MAX_PARTITIONS) {
+            throw TooManyPartitionsException::forTable(
+                $this->getTable(),
+                $existing,
+                $pending->count(),
+                self::MAX_PARTITIONS
+            );
+        }
     }
 
     /**
