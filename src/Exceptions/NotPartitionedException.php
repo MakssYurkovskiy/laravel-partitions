@@ -15,6 +15,15 @@ class NotPartitionedException extends PartitionException
         ));
     }
 
+    public static function forSync(string $table): self
+    {
+        return new self(sprintf(
+            'Table [%s] is not partitioned, so sync() has no partitions to add to. Call create() — or run '
+            .'partitions:add with --create — to partition it first; that rebuilds the whole table.',
+            $table
+        ));
+    }
+
     public static function forMigration(string $table): self
     {
         return new self(sprintf(

@@ -10,10 +10,12 @@ use Illuminate\Support\Collection;
 use Psr\Log\LoggerInterface;
 use Yurkovskiy\Partitions\Contracts\PartitionRepository;
 use Yurkovskiy\Partitions\Contracts\PartitionStrategy;
+use Yurkovskiy\Partitions\Exceptions\InvalidConfigValueException;
 use Yurkovskiy\Partitions\Exceptions\InvalidTableConfigException;
 use Yurkovskiy\Partitions\Exceptions\UnknownStrategyException;
 use Yurkovskiy\Partitions\Exceptions\UnknownTableException;
 use Yurkovskiy\Partitions\Schema\PartitionPeriod;
+use Yurkovskiy\Partitions\Support\WholeNumber;
 
 class PartitionManager
 {
@@ -29,18 +31,15 @@ class PartitionManager
         protected ?LoggerInterface $logger = null,
     ) {}
 
+    /**
+     * @throws InvalidConfigValueException
+     */
     public function newBuilder(): PartitionBuilder
     {
         $config = $this->given($this->config);
 
-        $builder = $this->apply(new PartitionBuilder($this->repository, $this->events, $this->logger), $config)
+        return $this->apply(new PartitionBuilder($this->repository, $this->events, $this->logger), $config)
             ->defaultConnection($this->nullableString($config['connection'] ?? null));
-
-        if (array_key_exists('future', $config)) {
-            $builder->future((int) $config['future']);
-        }
-
-        return $builder;
     }
 
     public function table(Model|string $table): PartitionBuilder
@@ -79,6 +78,7 @@ class PartitionManager
     /**
      * @throws UnknownTableException
      * @throws InvalidTableConfigException
+     * @throws InvalidConfigValueException
      * @throws UnknownStrategyException
      */
     public function for(string $key): PartitionBuilder
@@ -98,6 +98,7 @@ class PartitionManager
 
     /**
      * @throws InvalidTableConfigException
+     * @throws InvalidConfigValueException
      * @throws UnknownStrategyException
      */
     public function forTable(string $table, ?string $connection = null): PartitionBuilder
@@ -145,6 +146,7 @@ class PartitionManager
      * @return Collection<string, PartitionBuilder>
      *
      * @throws InvalidTableConfigException
+     * @throws InvalidConfigValueException
      * @throws UnknownStrategyException
      */
     public function configured(): Collection
@@ -164,13 +166,14 @@ class PartitionManager
     /**
      * @param  array<string, mixed>  $settings
      *
+     * @throws InvalidConfigValueException
      * @throws UnknownStrategyException
      */
     protected function fromArray(string $key, array $settings): PartitionBuilder
     {
         $settings = $this->given($settings);
 
-        $builder = $this->apply($this->newBuilder(), $settings);
+        $builder = $this->apply($this->newBuilder(), $settings, $key);
 
         if (array_key_exists('connection', $settings)) {
             $builder->connection($this->nullableString($settings['connection']));
@@ -182,21 +185,17 @@ class PartitionManager
             throw UnknownStrategyException::forTable($strategy, $key);
         }
 
-        $builder->table($settings['table'] ?? $key)
+        return $builder->table($settings['table'] ?? $key)
             ->strategy($strategy, $settings['column'] ?? 'created_at')
-            ->retain($this->nullableInt($settings['retain'] ?? null));
-
-        if (array_key_exists('future', $settings)) {
-            $builder->future((int) $settings['future']);
-        }
-
-        return $builder;
+            ->retain($this->wholeNumber('retain', $settings['retain'] ?? null, $key, nullable: true));
     }
 
     /**
      * @param  array<array-key, mixed>  $settings
+     *
+     * @throws InvalidConfigValueException
      */
-    protected function apply(PartitionBuilder $builder, array $settings): PartitionBuilder
+    protected function apply(PartitionBuilder $builder, array $settings, ?string $table = null): PartitionBuilder
     {
         if (array_key_exists('prefix', $settings)) {
             $builder->prefix((string) $settings['prefix']);
@@ -211,11 +210,11 @@ class PartitionManager
         }
 
         if (array_key_exists('chunk', $settings)) {
-            $builder->chunk($this->nullableInt($settings['chunk']));
+            $builder->chunk($this->wholeNumber('chunk', $settings['chunk'], $table, nullable: true));
         }
 
         if (array_key_exists('sync_chunk', $settings)) {
-            $builder->syncChunk($this->nullableInt($settings['sync_chunk']));
+            $builder->syncChunk($this->wholeNumber('sync_chunk', $settings['sync_chunk'], $table, nullable: true));
         }
 
         if (array_key_exists('fill_gaps', $settings)) {
@@ -223,7 +222,11 @@ class PartitionManager
         }
 
         if (array_key_exists('max_gaps', $settings)) {
-            $builder->maxGaps($this->nullableInt($settings['max_gaps']));
+            $builder->maxGaps($this->wholeNumber('max_gaps', $settings['max_gaps'], $table, nullable: true));
+        }
+
+        if (array_key_exists('future', $settings)) {
+            $builder->future($this->wholeNumber('future', $settings['future'], $table) ?? 0);
         }
 
         if (array_key_exists('timezone', $settings)) {
@@ -280,9 +283,16 @@ class PartitionManager
         return $value === false ? null : (string) $value;
     }
 
-    protected function nullableInt(mixed $value): ?int
+    /**
+     * @throws InvalidConfigValueException
+     */
+    protected function wholeNumber(string $setting, mixed $value, ?string $table, bool $nullable = false): ?int
     {
-        return $value === null ? null : (int) $value;
+        if ($value === null && $nullable) {
+            return null;
+        }
+
+        return WholeNumber::parse($value) ?? throw new InvalidConfigValueException($setting, $value, $table, $nullable);
     }
 
     /**

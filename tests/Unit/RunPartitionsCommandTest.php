@@ -193,6 +193,27 @@ REORGANIZE PARTITION `pMax` INTO (
         ];
     }
 
+    public function test_a_number_that_is_not_one_is_reported_and_the_rest_is_maintained(): void
+    {
+        $repository = $this->partitioned();
+
+        $tester = $this->runCommand($this->command($repository, ['tables' => [
+            'transactions' => ['retain' => false],
+            'audit' => ['table' => 'audit_logs', 'future' => 1],
+        ]]));
+
+        $output = $tester->getDisplay();
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString(
+            'Setting [retain] of table [transactions] in config/partitions.php has to be a whole number, zero or above, or null; false given.',
+            $output
+        );
+        self::assertMatchesRegularExpression('/audit\s+\|\s+audit_logs\s+\|\s+1\s+\|\s+0\s+\|\s+1/', $output);
+        self::assertCount(1, $repository->executed);
+        self::assertStringContainsString('ALTER TABLE `audit_logs`', $repository->executed[0]);
+    }
+
     public function test_a_lone_broken_entry_fails_the_run(): void
     {
         $repository = $this->partitioned();

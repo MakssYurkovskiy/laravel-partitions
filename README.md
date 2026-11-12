@@ -64,7 +64,8 @@ composer require yurkovskiy/laravel-partitions
 php artisan vendor:publish --tag=partitions-config
 ```
 
-PHP 8.2 or newer with Laravel 12, PHP 8.3 or newer with Laravel 13, on MySQL or MariaDB. Laravel 11
+PHP 8.2 or newer with Laravel 12, PHP 8.3 or newer with Laravel 13, on MySQL or MariaDB — the
+suite runs against MySQL 8.0, MySQL 8.4 and MariaDB 11.4. Laravel 11
 is not supported: its security window closed in March 2026, so every `11.x` release carries
 unpatched advisories and Composer refuses to install one unless the advisory policy is switched off.
 
@@ -175,12 +176,12 @@ the ones it would have run.
 | Method | Description |
 | --- | --- |
 | `create()` | Partition a table that is not partitioned yet. Throws when it already is. |
-| `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, stopping after `maxGaps()` skipped periods when the table skipped more. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. Partitions of the plan the table already has are left out, so a retry with the same plan after a failed statement sends only what is still missing. `syncStatements()` takes a plan the same way. |
+| `sync(?PartitionPlan $plan = null)` | Add the missing partitions of the configured range, stopping after `maxGaps()` skipped periods when the table skipped more. No-op when there is nothing to add. Given a `plan()`, it adds the pending partitions of that plan instead of planning again — the list that was shown is the list that is added. Partitions of the plan the table already has are left out, so a retry with the same plan after a failed statement sends only what is still missing. `syncStatements()` takes a plan the same way. Throws a `NotPartitionedException` on a table that is not partitioned, in a dry run too: partitioning a table is `create()`, never a side effect of `sync()`. |
 | `prune()` | Drop what falls outside `retain()`, except the last partition with a boundary. |
 | `dropBefore($date)` | Drop everything older than the given date — its own calendar date for a date object, see [Dates you pass in](#dates-you-pass-in). |
 | `dropBetween($from, $to)` | Drop the partitions covering the range, inclusive on both ends. The bounds are normalised, so passing them the other way round selects the same partitions. |
-| `maintain(?PartitionPlan $plan = null)` | `['added' => ..., 'dropped' => ...]` — `sync($plan)` plus `prune()`. What is dropped is decided before anything is added, so a dry run lists the drops of a real run. |
-| `drop($partitions)` | Drop exactly these partitions — say, the list `outdated()` or `inRange()` returned and somebody looked at. |
+| `maintain(?PartitionPlan $plan = null)` | `['added' => ..., 'dropped' => ...]` — `sync($plan)` plus `prune()`. What is dropped is decided before anything is added, so a dry run lists the drops of a real run. Throws on a table that is not partitioned, like `sync()`. |
+| `drop($partitions)` | Drop exactly these partitions — say, the list `outdated()` or `inRange()` returned and somebody looked at. A selection that covers every partition of the table throws a `DropsEveryPartitionException` before the first statement — MySQL keeps at least one — and that goes for `dropBefore()` and `dropBetween()` too, which can only reach that far on a table without a `MAXVALUE` partition. |
 | `truncate($partitions)` | Empty partitions without dropping them. |
 | `removePartitioning()` | `ALTER TABLE ... REMOVE PARTITIONING`, keeping the data. Throws when the table is not partitioned. |
 
@@ -386,10 +387,14 @@ A table with years of backlog is cheapest to fix in a maintenance window with `-
 statement, one rewrite), or by moving the data out, rebuilding with `create()` and loading it back.
 
 `partitions:drop` prints the partitions, the estimated row count and the disk space it is about to
-delete, and asks for confirmation too. Its `--from`/`--to` pair is inclusive and order-insensitive:
+delete, and asks for confirmation too. `--before`, the `--from`/`--to` pair and `--retain` are three
+ways of selecting what to drop, and the command takes one: two of them together stop it before
+anything is selected, rather than one quietly winning. Its `--from`/`--to` pair is inclusive and order-insensitive:
 swapped bounds select the same partitions rather than an empty range. The pair goes together: either
 one alone stops the command before anything is selected, in a dry run and on an unpartitioned table
-too. The command does not pick the missing end — an end of "now" would take the partition rows are
+too. A selection that takes every partition of the table — possible only without a `MAXVALUE`
+partition — stops the command before the list is printed: MySQL refuses to drop the last partition,
+so the run would end half done. The command does not pick the missing end — an end of "now" would take the partition rows are
 being written to, and a start of "the first partition" would take the whole history. What gets
 dropped is the list it printed: a confirmation answered after midnight does not widen `--retain` or a
 relative `--before` by the day that has just begun. Both confirmations are skipped by `--force`, by
@@ -403,8 +408,12 @@ options are only overrides. `--strategy` takes a period by its name or a shortha
 `d`) or the class name of a custom strategy, `--expression` takes `to_days`, `unix_timestamp` or
 `columns`; `--help` lists both from the enums that define them. An option passed empty
 (`--tablespace=`) is not an override. `--future`, `--retain`, `--chunk` and `--max-gaps` take a whole
-number, zero or above: anything else — `--retain=abc`, `--future=-1` — fails the command before a
-statement is built, instead of being read as `0`.
+number, zero or above: anything else — `--retain=abc`, `--future=-1`, a number too long for an
+integer — fails the command before a statement is built, instead of being read as `0`.
+
+`partitions:list` and `partitions:drop` tell a table that is not partitioned from one that is not
+there: a name the connection does not know ends the command with `Table [...] does not exist.` and a
+failure code, so a misspelt name does not pass for a plain table.
 
 ## Configuration and scheduled maintenance
 
@@ -451,6 +460,15 @@ the config file — no pruning, one statement, no limit. So `'timezone' => env('
 without the variable leaves the table on `partitions.timezone`. What turns a global `tablespace`,
 `timezone` or `max_partition` off for one table is `false`.
 
+A number is read as strictly as an option of the commands. `future`, `retain`, `chunk`, `sync_chunk`
+and `max_gaps` take a whole number, zero or above — an integer, or a string of digits, which is what
+`env()` returns. Anything else — `false`, `'abc'`, `-1`, `1.5` — throws an
+`InvalidConfigValueException` naming the setting and the table when the builder is made, before a
+statement is built, instead of being cast to `0`: `'retain' => false` does not become `retain(0)`,
+which would hand the whole history to `prune()`. A table that is not pruned has `'retain' => null`,
+or no `retain` at all. `partitions:run` reports a table with such a value as failed and maintains the
+rest.
+
 Configured tables are addressable by key:
 
 ```php
@@ -471,7 +489,9 @@ A key is looked up as it is written, so a schema-qualified `'reporting.transacti
 table and not a path into a nested array.
 
 Set `PARTITIONS_SCHEDULE_ENABLED=true` to have `partitions:run` scheduled automatically
-(`partitions.schedule.cron`, `withoutOverlapping()`, optionally `onOneServer()`); an empty
+(`partitions.schedule.cron`, `withoutOverlapping()`, and `onOneServer()` unless
+`partitions.schedule.on_one_server` is `false` — a `schedule` array that leaves the key out keeps it
+on); an empty
 `PARTITIONS_SCHEDULE_CRON=` keeps the default `15 3 * * *`. Or schedule it yourself:
 
 ```php
@@ -606,8 +626,8 @@ $clause = Partition::table('transactions')->daily('created_at')->future(30)->par
 
 ## Events
 
-Every operation that changed something dispatches an event after a successful run — never in dry run
-mode, and never when there was nothing to do. All four carry the same payload: the table, the
+Every operation that changed something dispatches an event once its statements have run — never in
+dry run mode, and never when there was nothing to do. All four carry the same payload: the table, the
 connection, the partition names and the statements.
 
 | Event | Dispatched by |
@@ -616,6 +636,14 @@ connection, the partition names and the statements.
 | `PartitionsDropped` | `prune()`, `dropBefore()`, `dropBetween()`, `drop()` |
 | `PartitionsTruncated` | `truncate()` |
 | `PartitioningRemoved` | `removePartitioning()`, with the partitions the table had before |
+
+An operation that runs several statements — `drop()` and `truncate()` under `chunk()`, `sync()` under
+`syncChunk()` — can fail part way: DDL is not rolled back, so the statements before the failing one
+have already changed the table. The event is dispatched then too, before the exception reaches the
+caller, and carries only what ran: the partitions of the statements that succeeded and those
+statements. A listener that archives or audits therefore hears of every partition that was dropped,
+never of one that was not. When the first statement fails, nothing changed and nothing is
+dispatched.
 
 The manager behind `Partition::` and the artisan commands is built again every time it is resolved,
 from the container and the config as they are at that moment. So in the tests of an application
@@ -630,8 +658,8 @@ what it was built with.
 last partition, so their rows share the first partition created. The message is the one
 `partitions:add` prints, and the context carries the same facts as an array — `table`, `from`,
 `last`, `first_skipped`, `last_skipped`, `skipped` (a count), `holder` (the partition the rows land
-in) and `continue_at` (the start that leaves no gap). Like the events, it is written after a
-successful run only — never in dry run mode, and never with `fillGaps(false)`.
+in) and `continue_at` (the start that leaves no gap). It is written after a run in which every
+statement succeeded — never in dry run mode, and never with `fillGaps(false)`.
 
 The logger is the application's `Psr\Log\LoggerInterface`, handed to every builder the manager or
 the facade makes. A builder constructed by hand takes it as the third argument and stays silent
@@ -654,6 +682,7 @@ whole, while a single case can be caught on its own.
 | --- | --- |
 | `UnknownTableException` | the table key is missing from `config/partitions.php` — `Partition::for()`, `partitions:run {table}` |
 | `InvalidTableConfigException` | the table key is in `config/partitions.php`, but holds something other than an array of settings — `Partition::for()`, `configured()`, the artisan commands, and a migration of the table named by that key |
+| `InvalidConfigValueException` | `future`, `retain`, `chunk`, `sync_chunk` or `max_gaps` in `config/partitions.php` is not a whole number, zero or above — `false`, a word, a negative number, a float — globally or for a table; thrown when the builder is made |
 | `UnknownStrategyException` | `strategy()` got a name that is neither daily/weekly/monthly/yearly nor a `PartitionStrategy` class, or a configured table's `strategy` is not a name, a `PartitionPeriod` case or a strategy at all |
 | `UnknownExpressionException` | `expression()` got something other than `to_days`, `unix_timestamp` or `columns` |
 | `MissingStrategyException` | the builder reached SQL without a strategy |
@@ -663,10 +692,12 @@ whole, while a single case can be caught on its own.
 | `InvalidTimezoneException` | `timezone()` got an identifier PHP does not know |
 | `InvalidDateException` | a date given as a string is blank or is not one PHP can read — `from()`, `to()`, `between()`, `has()`, `partitionNameFor()`, `inRange()`, `outdated()`, `dropBefore()`, `dropBetween()`, the same methods in a migration, and the `--from`, `--to` and `--before` options; Carbon's own exception is kept as `getPrevious()` |
 | `InvalidRangeException` | `from()` lies past the end of the range — `to()`, or today plus `future()` when `to()` is not set — so `create()`, `sync()` or a migration would cover no period |
+| `TooManyPartitionsException` | the range, or `future()`, covers more than 8192 periods — the number of partitions MySQL allows in one table — so `create()`, `sync()` or a migration could not be run; thrown before the periods are walked |
 | `TimezoneMismatchException` | `verifyTimezone()` found the session timezone away from the configured one, on the builder or in a migration |
 | `AlreadyPartitionedException` | `create()` on a partitioned table, or `partitionByRange()` in a migration without `replacePartitioning()` |
-| `NotPartitionedException` | `removePartitioning()` on a table that is not partitioned, from the builder or from a migration |
+| `NotPartitionedException` | `removePartitioning()` on a table that is not partitioned, from the builder or from a migration; `sync()`, `syncStatements()` or `maintain()` on such a table, before any statement is built |
 | `MaxPartitionConflictException` | `sync()` with `withoutMaxPartition()` against a table that has a `MAXVALUE` partition |
+| `DropsEveryPartitionException` | `drop()`, `dropBefore()`, `dropBetween()`, `dropStatements()` or `partitions:drop` selected every partition the table has; nothing is dropped, in a dry run and with any `chunk()` alike |
 | `ExpressionMismatchException` | the table is partitioned by another expression, column or method than the builder describes |
 | `StrategyMismatchException` | the table was cut by another period than the builder's strategy — a daily table under `monthly()` — or a partition named like a period of the strategy ends somewhere else |
 | `UnsupportedGrammarException` | a blueprint command compiles on a non-MySQL grammar |
@@ -827,13 +858,26 @@ that hold the lower bounds of the declared constraints honest. The package is a 
 `composer.lock` is not committed and CI resolves the dependencies with `composer update` on every
 run.
 
-No database required: the DDL is generated against a fake partition repository, so
+`tests/Unit` and `tests/Feature` need no database: the DDL is generated against a fake partition repository, so
 every statement, boundary and name is asserted as a string. The migration layer is covered the same
 way — the `Blueprint` is compiled to SQL and asserted, without a connection to a server. The
 commands are driven through Symfony's `CommandTester`, so their prompts, tables and exit codes are
 asserted too, and `tests/Feature` boots the service provider inside a real application with
 `orchestra/testbench` to cover the config merge, the container bindings, the registered commands and
 the scheduled maintenance.
+
+`tests/Integration` runs the same operations on a server: it partitions, extends, prunes, truncates
+and unpartitions real tables for every period and expression, through the builder and through
+migrations, and reads the result back from `information_schema`. CI runs it against MySQL 8.0,
+MySQL 8.4 and MariaDB 11.4. Without a server the suite is skipped; point it at one to run it:
+
+```bash
+PARTITIONS_DB_HOST=127.0.0.1 PARTITIONS_DB_PASSWORD=secret vendor/bin/phpunit --testsuite Integration
+```
+
+`PARTITIONS_DB_PORT` (3306), `PARTITIONS_DB_DATABASE` (`partitions_test`), `PARTITIONS_DB_USERNAME`
+(`root`) and `PARTITIONS_DB_DRIVER` (`mysql`, or `mariadb`) are read too. The database has to exist;
+the tests create and drop their own tables in it.
 
 PHPUnit 11 is required — the suite uses `#[DataProvider]` attributes, which PHPUnit 9 ignores.
 

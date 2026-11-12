@@ -28,6 +28,16 @@ class DropPartitionsCommand extends PartitionCommand
             $this->fail('The --from and --to options go together: pass both ends of the range to drop.');
         }
 
+        $selectors = array_filter([
+            $this->stringOption('before') !== null,
+            $this->stringOption('from') !== null,
+            $this->stringOption('retain') !== null,
+        ]);
+
+        if (count($selectors) > 1) {
+            $this->fail('The --before, --from/--to and --retain options each select what to drop: pass one of them.');
+        }
+
         $builder = $this->builderFor($this->tableArgument());
 
         if (($retain = $this->integerOption('retain')) !== null) {
@@ -39,9 +49,7 @@ class DropPartitionsCommand extends PartitionCommand
         }
 
         if (! $builder->isPartitioned()) {
-            $this->warn("Table [{$builder->getTable()}] is not partitioned.");
-
-            return self::SUCCESS;
+            return $this->unpartitioned($builder);
         }
 
         $targets = $this->resolveTargets($builder);
@@ -51,6 +59,8 @@ class DropPartitionsCommand extends PartitionCommand
 
             return self::SUCCESS;
         }
+
+        $builder->assertDroppable($targets);
 
         $this->line(sprintf('Dropping %d partitions from [%s]:', $targets->count(), $builder->getTable()));
         $this->line('  '.$targets->map(fn (PartitionInfo $partition) => $partition->name)->implode(', '));

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Yurkovskiy\Partitions\Tests\Unit;
 
 use Carbon\CarbonImmutable;
+use Closure;
 use Illuminate\Database\Eloquent\Model;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -14,11 +15,13 @@ use Yurkovskiy\Partitions\Events\PartitionsCreated;
 use Yurkovskiy\Partitions\Events\PartitionsDropped;
 use Yurkovskiy\Partitions\Events\PartitionsTruncated;
 use Yurkovskiy\Partitions\Exceptions\AlreadyPartitionedException;
+use Yurkovskiy\Partitions\Exceptions\DropsEveryPartitionException;
 use Yurkovskiy\Partitions\Exceptions\ExpressionMismatchException;
 use Yurkovskiy\Partitions\Exceptions\InvalidIdentifierException;
 use Yurkovskiy\Partitions\Exceptions\InvalidRangeException;
 use Yurkovskiy\Partitions\Exceptions\MaxPartitionConflictException;
 use Yurkovskiy\Partitions\Exceptions\NotPartitionedException;
+use Yurkovskiy\Partitions\Exceptions\TooManyPartitionsException;
 use Yurkovskiy\Partitions\Exceptions\UnknownStrategyException;
 use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\Schema\PendingPartition;
@@ -1813,9 +1816,12 @@ REORGANIZE PARTITION `pMax` INTO (
 
         $this->assertSame([['pMax', 'p20250615', 'pMax'], ['pMax', 'p20250616', 'pMax']], $this->partitionNames($statements));
         $this->assertSame(['p20250613', 'p20250614', 'p20250615', 'p20250616', 'pMax'], $repository->names());
-        $this->assertCount(1, $events->dispatched);
+        $this->assertCount(2, $events->dispatched);
         $this->assertInstanceOf(PartitionsCreated::class, $events->dispatched[0]);
-        $this->assertSame(['p20250615', 'p20250616'], $events->dispatched[0]->partitions);
+        $this->assertSame(['p20250614'], $events->dispatched[0]->partitions);
+        $this->assertCount(1, $events->dispatched[0]->statements);
+        $this->assertInstanceOf(PartitionsCreated::class, $events->dispatched[1]);
+        $this->assertSame(['p20250615', 'p20250616'], $events->dispatched[1]->partitions);
     }
 
     public function test_another_builder_given_a_partly_applied_plan_sends_only_what_is_still_missing(): void
@@ -2217,5 +2223,230 @@ REORGANIZE PARTITION `pMax` INTO (
         self::assertInstanceOf(PartitionsCreated::class, $event);
         self::assertSame('transactions', $event->table);
         self::assertStringStartsWith("ALTER TABLE `app_transactions`\n", $event->statements[0]);
+    }
+
+    /**
+     * @return iterable<string, array{0: Closure(PartitionBuilder): mixed}>
+     */
+    public static function operationsThatNeedAPartitionedTable(): iterable
+    {
+        yield 'sync()' => [fn (PartitionBuilder $builder) => $builder->sync()];
+        yield 'syncStatements()' => [fn (PartitionBuilder $builder) => $builder->syncStatements()];
+        yield 'maintain()' => [fn (PartitionBuilder $builder) => $builder->maintain()];
+        yield 'sync() in a dry run' => [fn (PartitionBuilder $builder) => $builder->dryRun()->sync()];
+        yield 'maintain() in a dry run' => [fn (PartitionBuilder $builder) => $builder->dryRun()->maintain()];
+    }
+
+    #[DataProvider('operationsThatNeedAPartitionedTable')]
+    public function test_a_table_that_is_not_partitioned_is_not_sent_add_partition(Closure $operation): void
+    {
+        $repository = new FakePartitionRepository;
+        $builder = $this->builder($repository)->table('transactions')->daily('created_at')->retain(3);
+
+        try {
+            $operation($builder);
+
+            self::fail('The table was treated as a partitioned one.');
+        } catch (NotPartitionedException $exception) {
+            self::assertSame(
+                'Table [transactions] is not partitioned, so sync() has no partitions to add to. Call create() — or '
+                .'run partitions:add with --create — to partition it first; that rebuilds the whole table.',
+                $exception->getMessage()
+            );
+        }
+
+        self::assertSame([], $repository->executed);
+    }
+
+    /**
+     * @return iterable<string, array{0: Closure(PartitionBuilder): mixed}>
+     */
+    public static function dropsOfTheWholeTable(): iterable
+    {
+        yield 'dropBefore()' => [fn (PartitionBuilder $builder) => $builder->dropBefore('2026-01-01')];
+        yield 'dropBetween()' => [fn (PartitionBuilder $builder) => $builder->dropBetween('2025-06-01', '2025-06-30')];
+        yield 'drop()' => [fn (PartitionBuilder $builder) => $builder->drop($builder->existing())];
+        yield 'dropStatements()' => [fn (PartitionBuilder $builder) => $builder->dropStatements($builder->existing())];
+        yield 'in one statement' => [fn (PartitionBuilder $builder) => $builder->chunk(null)->dropBefore('2026-01-01')];
+        yield 'in a dry run' => [fn (PartitionBuilder $builder) => $builder->dryRun()->dropBefore('2026-01-01')];
+    }
+
+    #[DataProvider('dropsOfTheWholeTable')]
+    public function test_a_drop_of_every_partition_is_refused_before_the_first_statement(Closure $drop): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250609' => '739777',
+            'p20250610' => '739778',
+            'p20250611' => '739779',
+        ]);
+        $events = new FakeDispatcher;
+        $builder = (new PartitionBuilder($repository, $events))
+            ->table('transactions')
+            ->daily('created_at')
+            ->withoutMaxPartition();
+
+        try {
+            $drop($builder);
+
+            self::fail('Every partition of the table was sent to DROP PARTITION.');
+        } catch (DropsEveryPartitionException $exception) {
+            self::assertSame(
+                'The 3 partitions selected are all that table [transactions] has, and MySQL keeps at least one '
+                .'partition in a partitioned table, so the last DROP PARTITION would fail. Narrow the selection, '
+                .'call removePartitioning() to keep the rows in a table without partitions, or drop the table itself.',
+                $exception->getMessage()
+            );
+        }
+
+        self::assertSame([], $repository->executed);
+        self::assertSame([], $events->dispatched);
+    }
+
+    public function test_the_max_partition_keeps_a_drop_of_every_period_possible(): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250609' => '739777',
+            'p20250610' => '739778',
+            'pMax' => 'MAXVALUE',
+        ]);
+
+        $statements = $this->builder($repository)->table('transactions')->daily('created_at')->dropBefore('2026-01-01');
+
+        self::assertCount(2, $statements);
+    }
+
+    public function test_the_whole_table_including_its_max_partition_is_not_dropped(): void
+    {
+        $repository = FakePartitionRepository::withPartitions(['p20250609' => '739777', 'pMax' => 'MAXVALUE']);
+        $builder = $this->builder($repository)->table('transactions')->daily('created_at');
+
+        $this->expectException(DropsEveryPartitionException::class);
+
+        $builder->drop($builder->existing());
+    }
+
+    /**
+     * @return iterable<string, array{0: int|null, 1: int, 2: list<string>, 3: int}>
+     */
+    public static function failuresPartWayThrough(): iterable
+    {
+        yield 'third of four statements' => [1, 3, ['p20250609', 'p20250610'], 2];
+        yield 'second of two chunks' => [2, 2, ['p20250609', 'p20250610'], 1];
+        yield 'last statement' => [1, 4, ['p20250609', 'p20250610', 'p20250611'], 3];
+    }
+
+    /**
+     * @param  list<string>  $reported
+     */
+    #[DataProvider('failuresPartWayThrough')]
+    public function test_a_drop_that_fails_part_way_reports_the_partitions_it_dropped(?int $chunk, int $failing, array $reported, int $statements): void
+    {
+        $repository = $this->fourDaysAndMax();
+        $repository->failingStatement = $failing;
+        $events = new FakeDispatcher;
+
+        $builder = (new PartitionBuilder($repository, $events))->table('transactions')->daily('created_at')->chunk($chunk);
+
+        try {
+            $builder->dropBefore('2025-06-13');
+
+            self::fail('The failing statement went unnoticed.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('Lock wait timeout exceeded; try restarting transaction', $exception->getMessage());
+        }
+
+        self::assertCount(1, $events->dispatched);
+
+        $event = $events->dispatched[0];
+
+        self::assertInstanceOf(PartitionsDropped::class, $event);
+        self::assertSame($reported, $event->partitions);
+        self::assertSame($repository->executed, $event->statements);
+        self::assertCount($statements, $event->statements);
+    }
+
+    public function test_a_truncate_that_fails_part_way_reports_the_partitions_it_emptied(): void
+    {
+        $repository = $this->fourDaysAndMax();
+        $repository->failingStatement = 2;
+        $events = new FakeDispatcher;
+
+        $builder = (new PartitionBuilder($repository, $events))->table('transactions')->daily('created_at');
+
+        try {
+            $builder->truncate($builder->inRange('2025-06-09', '2025-06-11'));
+
+            self::fail('The failing statement went unnoticed.');
+        } catch (RuntimeException) {
+        }
+
+        self::assertCount(1, $events->dispatched);
+        self::assertInstanceOf(PartitionsTruncated::class, $events->dispatched[0]);
+        self::assertSame(['p20250609'], $events->dispatched[0]->partitions);
+        self::assertSame($repository->executed, $events->dispatched[0]->statements);
+    }
+
+    public function test_a_first_statement_that_fails_reports_nothing(): void
+    {
+        $repository = $this->fourDaysAndMax();
+        $repository->failingStatement = 1;
+        $events = new FakeDispatcher;
+
+        try {
+            (new PartitionBuilder($repository, $events))->table('transactions')->daily('created_at')->dropBefore('2025-06-13');
+
+            self::fail('The failing statement went unnoticed.');
+        } catch (RuntimeException) {
+        }
+
+        self::assertSame([], $events->dispatched);
+    }
+
+    protected function fourDaysAndMax(): FakePartitionRepository
+    {
+        return FakePartitionRepository::withPartitions([
+            'p20250609' => '739777',
+            'p20250610' => '739778',
+            'p20250611' => '739779',
+            'p20250612' => '739780',
+            'pMax' => 'MAXVALUE',
+        ]);
+    }
+
+    public function test_a_look_ahead_past_the_partition_limit_is_refused_before_it_is_walked(): void
+    {
+        $builder = $this->builder()->table('transactions')->daily('created_at')->future(999_999_999_999_999_999);
+
+        $this->expectException(TooManyPartitionsException::class);
+        $this->expectExceptionMessage(
+            'future(999999999999999999) for table [transactions] looks further ahead than the 8192 partitions MySQL '
+            .'allows in one table. Lower the look-ahead.'
+        );
+
+        $builder->createStatement();
+    }
+
+    public function test_a_range_of_more_periods_than_a_table_can_hold_is_refused(): void
+    {
+        $builder = $this->builder()->table('transactions')->daily('created_at')->between('2000-01-01', '2025-06-13');
+
+        $this->expectException(TooManyPartitionsException::class);
+        $this->expectExceptionMessage(
+            'The range for table [transactions], 2000-01-01 to 2025-06-13, covers more than 8192 periods, and 8192 '
+            .'partitions is all MySQL allows in one table. Narrow the range, or partition by a longer period.'
+        );
+
+        $builder->createStatement();
+    }
+
+    public function test_the_same_span_in_longer_periods_fits(): void
+    {
+        $sql = $this->builder()
+            ->table('transactions')
+            ->monthly('created_at')
+            ->between('2000-01-01', '2025-06-13')
+            ->createStatement();
+
+        self::assertSame(306, substr_count($sql, 'VALUES LESS THAN ('));
     }
 }

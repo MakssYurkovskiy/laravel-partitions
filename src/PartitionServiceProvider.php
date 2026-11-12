@@ -74,7 +74,7 @@ class PartitionServiceProvider extends ServiceProvider
                 ->cron($cron === '' ? '15 3 * * *' : $cron)
                 ->withoutOverlapping();
 
-            if ($schedule['on_one_server'] ?? false) {
+            if ($schedule['on_one_server'] ?? true) {
                 $event->onOneServer();
             }
         });

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Yurkovskiy\Partitions;
 
 use Carbon\CarbonImmutable;
+use Closure;
 use DateTimeInterface;
 use DateTimeZone;
 use Illuminate\Contracts\Events\Dispatcher;
@@ -19,6 +20,7 @@ use Yurkovskiy\Partitions\Events\PartitionsCreated;
 use Yurkovskiy\Partitions\Events\PartitionsDropped;
 use Yurkovskiy\Partitions\Events\PartitionsTruncated;
 use Yurkovskiy\Partitions\Exceptions\AlreadyPartitionedException;
+use Yurkovskiy\Partitions\Exceptions\DropsEveryPartitionException;
 use Yurkovskiy\Partitions\Exceptions\ExpressionMismatchException;
 use Yurkovskiy\Partitions\Exceptions\InvalidDateException;
 use Yurkovskiy\Partitions\Exceptions\InvalidRangeException;
@@ -30,6 +32,7 @@ use Yurkovskiy\Partitions\Exceptions\NotPartitionedException;
 use Yurkovskiy\Partitions\Exceptions\PartitionException;
 use Yurkovskiy\Partitions\Exceptions\StrategyMismatchException;
 use Yurkovskiy\Partitions\Exceptions\TimezoneMismatchException;
+use Yurkovskiy\Partitions\Exceptions\TooManyPartitionsException;
 use Yurkovskiy\Partitions\Exceptions\UnknownStrategyException;
 use Yurkovskiy\Partitions\Schema\PartitionExpression;
 use Yurkovskiy\Partitions\Schema\PartitionGap;
@@ -44,6 +47,8 @@ use Yurkovskiy\Partitions\Support\Identifier;
 class PartitionBuilder
 {
     protected const FRAME = 'UTC';
+
+    protected const MAX_PARTITIONS = 8192;
 
     protected string $table = '';
 
@@ -617,6 +622,7 @@ class PartitionBuilder
      */
     public function syncStatements(?PartitionPlan $plan = null): Collection
     {
+        $this->assertPartitioned();
         $this->assertMaxPartitionMatches();
 
         $pending = $this->current($plan)->pending;
@@ -628,8 +634,7 @@ class PartitionBuilder
         $table = $this->prefixedTable();
         $maxPartition = $this->existingMaxPartition();
 
-        return $pending
-            ->chunk($this->syncChunk ?? $pending->count())
+        return $this->grouped($pending, $this->syncChunk)
             ->map(function (Collection $group) use ($table, $maxPartition) {
                 $definitions = $this->definitionsFor($group, withMax: false);
 
@@ -642,13 +647,32 @@ class PartitionBuilder
 
     /**
      * @param  Collection<int, PartitionInfo>|array<int, PartitionInfo>  $partitions
+     *
+     * @throws DropsEveryPartitionException
+     */
+    public function assertDroppable(Collection|array $partitions): void
+    {
+        $names = collect($partitions)->map(fn (PartitionInfo $partition) => $partition->name);
+        $existing = $this->existingNames();
+
+        if ($existing->isNotEmpty() && $existing->diff($names)->isEmpty()) {
+            throw new DropsEveryPartitionException($this->getTable(), $existing->count());
+        }
+    }
+
+    /**
+     * @param  Collection<int, PartitionInfo>|array<int, PartitionInfo>  $partitions
      * @return Collection<int, string>
+     *
+     * @throws DropsEveryPartitionException
      */
     public function dropStatements(Collection|array $partitions): Collection
     {
+        $this->assertDroppable($partitions);
+
         $names = collect($partitions)->map(fn (PartitionInfo $partition) => $partition->name);
 
-        return $names->chunk($this->chunk ?? $names->count())
+        return $this->grouped($names, $this->chunk)
             ->map(fn (Collection $group) => $this->grammar->dropPartitions($this->prefixedTable(), $group))
             ->values();
     }
@@ -686,6 +710,8 @@ class PartitionBuilder
      */
     public function sync(?PartitionPlan $plan = null): Collection
     {
+        $this->assertPartitioned();
+
         $plan = $this->current($plan);
         $statements = $this->syncStatements($plan);
 
@@ -694,19 +720,19 @@ class PartitionBuilder
         }
 
         $gap = $this->gap();
+        $names = $plan->pending->map(fn (PendingPartition $partition) => $partition->name);
+        $groups = $this->grouped($names, $this->syncChunk);
 
-        $this->run($statements, $plan->pending);
+        $this->run($statements, $plan->pending, fn (int $executed) => $this->fire(new PartitionsCreated(
+            $this->getTable(),
+            $this->getConnection(),
+            $groups->take($executed)->flatten()->all(),
+            $statements->take($executed)->all(),
+        )));
 
         if ($gap !== null) {
             $this->warn($gap->message(), $gap->toArray());
         }
-
-        $this->fire(new PartitionsCreated(
-            $this->getTable(),
-            $this->getConnection(),
-            $plan->pending->map(fn (PendingPartition $partition) => $partition->name)->all(),
-            $statements->all(),
-        ));
 
         return $statements;
     }
@@ -748,6 +774,8 @@ class PartitionBuilder
      */
     public function maintain(?PartitionPlan $plan = null): array
     {
+        $this->assertPartitioned();
+
         $plan = $this->current($plan);
         $outdated = $this->outdatedAfter($plan);
 
@@ -769,18 +797,17 @@ class PartitionBuilder
             return collect();
         }
 
-        $statements = $names->chunk($this->chunk ?? $names->count())
-            ->map(fn (Collection $chunk) => $this->grammar->truncatePartitions($this->prefixedTable(), $chunk))
+        $groups = $this->grouped($names, $this->chunk);
+        $statements = $groups
+            ->map(fn (Collection $group) => $this->grammar->truncatePartitions($this->prefixedTable(), $group))
             ->values();
 
-        $this->run($statements);
-
-        $this->fire(new PartitionsTruncated(
+        $this->run($statements, executed: fn (int $executed) => $this->fire(new PartitionsTruncated(
             $this->getTable(),
             $this->getConnection(),
-            $names->values()->all(),
-            $statements->all(),
-        ));
+            $groups->take($executed)->flatten()->all(),
+            $statements->take($executed)->all(),
+        )));
 
         return $statements;
     }
@@ -814,6 +841,8 @@ class PartitionBuilder
     /**
      * @param  Collection<int, PartitionInfo>|array<int, PartitionInfo>  $partitions
      * @return Collection<int, string>
+     *
+     * @throws DropsEveryPartitionException
      */
     public function drop(Collection|array $partitions): Collection
     {
@@ -824,21 +853,23 @@ class PartitionBuilder
         }
 
         $statements = $this->dropStatements($partitions);
+        $groups = $this->grouped($partitions->map(fn (PartitionInfo $partition) => $partition->name), $this->chunk);
 
-        $this->run($statements);
-
-        $this->fire(new PartitionsDropped(
+        $this->run($statements, executed: fn (int $executed) => $this->fire(new PartitionsDropped(
             $this->getTable(),
             $this->getConnection(),
-            $partitions->map(fn (PartitionInfo $partition) => $partition->name)->all(),
-            $statements->all(),
-        ));
+            $groups->take($executed)->flatten()->all(),
+            $statements->take($executed)->all(),
+        )));
 
         return $statements;
     }
 
     /**
      * @return Collection<int, PendingPartition>
+     *
+     * @throws InvalidRangeException
+     * @throws TooManyPartitionsException
      */
     protected function plannedPartitions(?CarbonImmutable $from = null): Collection
     {
@@ -846,18 +877,31 @@ class PartitionBuilder
 
         $this->assertRangeCoversAPeriod();
 
-        return collect($strategy->periods($from ?? $this->resolveFrom(), $this->resolveTo()))
-            ->map(function (CarbonImmutable $start) use ($strategy) {
-                $upperBound = $strategy->next($start);
+        $from ??= $this->resolveFrom();
+        $to = $this->resolveTo();
+        $planned = collect();
 
-                return new PendingPartition(
-                    name: $strategy->partitionName($start),
-                    start: $start,
-                    upperBound: $upperBound,
-                    boundary: $this->expression->boundary($upperBound, $this->boundaryTimezone()),
+        foreach ($strategy->periods($from, $to) as $start) {
+            if ($planned->count() === self::MAX_PARTITIONS) {
+                throw TooManyPartitionsException::forRange(
+                    $this->getTable(),
+                    $from->toDateString(),
+                    $to->toDateString(),
+                    self::MAX_PARTITIONS
                 );
-            })
-            ->values();
+            }
+
+            $upperBound = $strategy->next($start);
+
+            $planned->push(new PendingPartition(
+                name: $strategy->partitionName($start),
+                start: $start,
+                upperBound: $upperBound,
+                boundary: $this->expression->boundary($upperBound, $this->boundaryTimezone()),
+            ));
+        }
+
+        return $planned;
     }
 
     /**
@@ -918,6 +962,16 @@ class PartitionBuilder
                 $this->from->toDateString(),
                 $to->toDateString()
             );
+    }
+
+    /**
+     * @throws NotPartitionedException
+     */
+    protected function assertPartitioned(): void
+    {
+        if (! $this->isPartitioned()) {
+            throw NotPartitionedException::forSync($this->getTable());
+        }
     }
 
     /**
@@ -1163,9 +1217,20 @@ class PartitionBuilder
         return CarbonImmutable::parse($boundary->format('Y-m-d'), self::FRAME);
     }
 
+    /**
+     * @throws TooManyPartitionsException
+     */
     protected function resolveTo(): CarbonImmutable
     {
-        return $this->to ?? $this->getStrategy()->shift($this->now(), $this->future);
+        if ($this->to !== null) {
+            return $this->to;
+        }
+
+        if ($this->future > self::MAX_PARTITIONS) {
+            throw TooManyPartitionsException::forLookAhead($this->getTable(), $this->future, self::MAX_PARTITIONS);
+        }
+
+        return $this->getStrategy()->shift($this->now(), $this->future);
     }
 
     protected function existingMaxPartition(): ?PartitionInfo
@@ -1174,12 +1239,26 @@ class PartitionBuilder
     }
 
     /**
+     * @template TValue
+     *
+     * @param  Collection<int, TValue>  $items
+     * @return Collection<int, Collection<int, TValue>>
+     */
+    protected function grouped(Collection $items, ?int $size): Collection
+    {
+        return $items->isEmpty()
+            ? collect()
+            : $items->values()->chunk($size ?? $items->count())->map(fn (Collection $group) => $group->values())->values();
+    }
+
+    /**
      * @param  Collection<int, string>  $statements
      * @param  Collection<int, PendingPartition>|null  $writing
+     * @param  (Closure(int): void)|null  $executed
      *
      * @throws TimezoneMismatchException
      */
-    protected function run(Collection $statements, ?Collection $writing = null): void
+    protected function run(Collection $statements, ?Collection $writing = null, ?Closure $executed = null): void
     {
         if ($this->verifiesTimezone()) {
             $this->assertSessionReads($writing ?? collect());
@@ -1189,10 +1268,20 @@ class PartitionBuilder
             return;
         }
 
+        $done = 0;
+
         try {
-            $statements->each(fn (string $sql) => $this->repository->statement($this->getConnection(), $sql));
+            foreach ($statements as $sql) {
+                $this->repository->statement($this->getConnection(), $sql);
+
+                $done++;
+            }
         } finally {
             $this->refresh();
+
+            if ($executed !== null && $done > 0) {
+                $executed($done);
+            }
         }
     }
 

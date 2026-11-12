@@ -9,9 +9,11 @@ use Illuminate\Console\Command;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Yurkovskiy\Partitions\Console\DropPartitionsCommand;
 use Yurkovskiy\Partitions\Events\PartitionsDropped;
+use Yurkovskiy\Partitions\Exceptions\DropsEveryPartitionException;
 use Yurkovskiy\Partitions\Exceptions\StrategyMismatchException;
 use Yurkovskiy\Partitions\PartitionBuilder;
 use Yurkovskiy\Partitions\PartitionManager;
+use Yurkovskiy\Partitions\Schema\TableInfo;
 use Yurkovskiy\Partitions\Tests\Support\CommandTestCase;
 use Yurkovskiy\Partitions\Tests\Support\FakeDispatcher;
 use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
@@ -54,9 +56,55 @@ class DropPartitionsCommandTest extends CommandTestCase
         ], expression: 'to_days(`created_at`)');
     }
 
-    public function test_an_unpartitioned_table_is_left_alone(): void
+    public function test_a_table_that_does_not_exist_is_not_called_unpartitioned(): void
     {
         $repository = new FakePartitionRepository;
+
+        $tester = $this->runCommand(
+            $this->command($repository),
+            ['table' => 'transactoins', '--retain' => '1', '--force' => true],
+        );
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Table [transactoins] does not exist.', $tester->getDisplay());
+        self::assertStringNotContainsString('is not partitioned', $tester->getDisplay());
+        self::assertSame([], $repository->executed);
+    }
+
+    /**
+     * @return iterable<string, array{0: array<string, string>}>
+     */
+    public static function selectorsGivenTogether(): iterable
+    {
+        yield '--before with a range' => [['--before' => '2025-06-12', '--from' => '2025-06-10', '--to' => '2025-06-11']];
+        yield '--before with --retain' => [['--before' => '2025-06-12', '--retain' => '1']];
+        yield 'a range with --retain' => [['--from' => '2025-06-10', '--to' => '2025-06-11', '--retain' => '1']];
+    }
+
+    /**
+     * @param  array<string, string>  $options
+     */
+    #[DataProvider('selectorsGivenTogether')]
+    public function test_two_ways_of_selecting_partitions_stop_the_command(array $options): void
+    {
+        $repository = $this->partitioned();
+
+        $tester = $this->runCommand(
+            $this->command($repository),
+            ['table' => 'transactions', '--force' => true, ...$options],
+        );
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString(
+            'The --before, --from/--to and --retain options each select what to drop: pass one of them.',
+            $tester->getDisplay()
+        );
+        self::assertSame([], $repository->executed);
+    }
+
+    public function test_an_unpartitioned_table_is_left_alone(): void
+    {
+        $repository = new FakePartitionRepository([], new TableInfo(name: 'transactions'));
 
         $tester = $this->runCommand(
             $this->command($repository),
@@ -509,5 +557,40 @@ class DropPartitionsCommandTest extends CommandTestCase
         self::assertCount(4, $repository->executed);
         self::assertStringNotContainsString('pMax', implode(' ', $repository->executed));
         self::assertStringContainsString('`p20250613`', $repository->executed[3]);
+    }
+
+    /**
+     * @return iterable<string, array{0: array<string, mixed>}>
+     */
+    public static function selectionsOfTheWholeTable(): iterable
+    {
+        yield '--before' => [['--before' => '2026-01-01']];
+        yield '--from and --to' => [['--from' => '2025-06-01', '--to' => '2025-06-30']];
+        yield '--before with --force' => [['--before' => '2026-01-01', '--force' => true]];
+        yield '--before in a dry run' => [['--before' => '2026-01-01', '--dry-run' => true]];
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     */
+    #[DataProvider('selectionsOfTheWholeTable')]
+    public function test_a_selection_of_every_partition_stops_before_the_confirmation(array $options): void
+    {
+        $repository = FakePartitionRepository::withPartitions([
+            'p20250610' => '739778',
+            'p20250611' => '739779',
+            'p20250612' => '739780',
+        ], expression: 'to_days(`created_at`)');
+        $command = $this->command($repository, ['max_partition' => false]);
+
+        try {
+            $this->runCommand($command, ['table' => 'transactions', ...$options]);
+
+            self::fail('The command went on to drop every partition.');
+        } catch (DropsEveryPartitionException $exception) {
+            self::assertStringContainsString('are all that table [transactions] has', $exception->getMessage());
+        }
+
+        self::assertSame([], $repository->executed);
     }
 }
