@@ -56,7 +56,7 @@ class PartitionGrammar
     {
         return sprintf(
             "ALTER TABLE %s\n%s",
-            Identifier::quote($table),
+            Identifier::quoteTable($table),
             $this->partitionByClause($column, $expression, $definitions)
         );
     }
@@ -68,7 +68,7 @@ class PartitionGrammar
     {
         return sprintf(
             "ALTER TABLE %s\nADD PARTITION (\n%s\n)",
-            Identifier::quote($table),
+            Identifier::quoteTable($table),
             $this->indent($definitions)
         );
     }
@@ -82,7 +82,7 @@ class PartitionGrammar
 
         return sprintf(
             "ALTER TABLE %s\nREORGANIZE PARTITION %s INTO (\n%s\n)",
-            Identifier::quote($table),
+            Identifier::quoteTable($table),
             Identifier::quote($maxPartition),
             $this->indent($definitions)
         );
@@ -95,7 +95,7 @@ class PartitionGrammar
     {
         return sprintf(
             'ALTER TABLE %s DROP PARTITION %s',
-            Identifier::quote($table),
+            Identifier::quoteTable($table),
             $this->quoteNames($names)
         );
     }
@@ -107,21 +107,21 @@ class PartitionGrammar
     {
         return sprintf(
             'ALTER TABLE %s TRUNCATE PARTITION %s',
-            Identifier::quote($table),
+            Identifier::quoteTable($table),
             $this->quoteNames($names)
         );
     }
 
     public function removePartitioning(string $table): string
     {
-        return sprintf('ALTER TABLE %s REMOVE PARTITIONING', Identifier::quote($table));
+        return sprintf('ALTER TABLE %s REMOVE PARTITIONING', Identifier::quoteTable($table));
     }
 
     protected function tablespaceClause(): string
     {
         return $this->tablespace === null || $this->tablespace === ''
             ? ''
-            : ' TABLESPACE = '.Identifier::validate($this->tablespace);
+            : ' TABLESPACE = '.Identifier::quote($this->tablespace);
     }
 
     /**

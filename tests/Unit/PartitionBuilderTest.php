@@ -140,11 +140,11 @@ class PartitionBuilderTest extends TestCase
             ->partitionByClause();
 
         $this->assertStringContainsString(
-            'PARTITION `p20250613` VALUES LESS THAN (739781) TABLESPACE = innodb_file_per_table',
+            'PARTITION `p20250613` VALUES LESS THAN (739781) TABLESPACE = `innodb_file_per_table`',
             $sql
         );
         $this->assertStringContainsString(
-            'PARTITION `pMax` VALUES LESS THAN MAXVALUE TABLESPACE = innodb_file_per_table',
+            'PARTITION `pMax` VALUES LESS THAN MAXVALUE TABLESPACE = `innodb_file_per_table`',
             $sql
         );
     }
@@ -556,6 +556,42 @@ class PartitionBuilderTest extends TestCase
             ->table('transactions`; DROP TABLE users; --')
             ->daily('created_at')
             ->createStatement();
+    }
+
+    public function test_a_dotted_column_is_rejected_before_any_statement_runs(): void
+    {
+        $repository = new FakePartitionRepository;
+
+        try {
+            $this->builder($repository)->table('transactions')->daily('x.created_at')->create();
+            self::fail('The dotted column was accepted.');
+        } catch (InvalidIdentifierException $e) {
+            self::assertStringContainsString('[x.created_at]', $e->getMessage());
+        }
+
+        self::assertSame([], $repository->executed);
+    }
+
+    public function test_a_dotted_max_partition_is_rejected_before_any_statement_runs(): void
+    {
+        $repository = new FakePartitionRepository;
+
+        try {
+            $this->builder($repository)->table('transactions')->daily('created_at')->withMaxPartition('p.max')->create();
+            self::fail('The dotted partition name was accepted.');
+        } catch (InvalidIdentifierException $e) {
+            self::assertStringContainsString('[p.max]', $e->getMessage());
+        }
+
+        self::assertSame([], $repository->executed);
+    }
+
+    public function test_a_dotted_tablespace_is_rejected(): void
+    {
+        $this->expectException(InvalidIdentifierException::class);
+        $this->expectExceptionMessage('[space.one]');
+
+        $this->builder()->table('transactions')->daily('created_at')->tablespace('space.one')->createStatement();
     }
 
     public function test_it_rejects_unknown_strategies(): void

@@ -25,6 +25,7 @@ use Yurkovskiy\Partitions\Schema\PartitionPeriod;
 use Yurkovskiy\Partitions\Tests\Support\ArchiveEvent;
 use Yurkovskiy\Partitions\Tests\Support\FakePartitionRepository;
 use Yurkovskiy\Partitions\Tests\Support\QuarterlyStrategy;
+use Yurkovskiy\Partitions\Tests\Support\RecordingConnection;
 
 class BlueprintTest extends TestCase
 {
@@ -135,9 +136,9 @@ class BlueprintTest extends TestCase
         $this->assertSame(<<<'SQL'
             ALTER TABLE `transactions`
             PARTITION BY RANGE COLUMNS(`created_at`) (
-                PARTITION `part_202506` VALUES LESS THAN ('2025-07-01') TABLESPACE = innodb_file_per_table,
-                PARTITION `part_202507` VALUES LESS THAN ('2025-08-01') TABLESPACE = innodb_file_per_table,
-                PARTITION `p_future` VALUES LESS THAN MAXVALUE TABLESPACE = innodb_file_per_table
+                PARTITION `part_202506` VALUES LESS THAN ('2025-07-01') TABLESPACE = `innodb_file_per_table`,
+                PARTITION `part_202507` VALUES LESS THAN ('2025-08-01') TABLESPACE = `innodb_file_per_table`,
+                PARTITION `p_future` VALUES LESS THAN MAXVALUE TABLESPACE = `innodb_file_per_table`
             )
             SQL, $statements[0]);
     }
@@ -643,6 +644,48 @@ class BlueprintTest extends TestCase
         $this->compile($this->connection(), 'transactions', function (Blueprint $table) {
             $table->partitionByRange('created_at`) */ --')->daily();
         });
+    }
+
+    #[DataProvider('dottedNames')]
+    public function test_a_dotted_column_or_partition_name_is_rejected_before_the_table_is_created(callable $declare, string $name): void
+    {
+        $connection = new RecordingConnection;
+        $connection->useDefaultSchemaGrammar();
+
+        $blueprint = new Blueprint($connection, 'transactions', function (Blueprint $table) use ($declare) {
+            $table->create();
+            $table->id();
+            $table->dateTime('created_at');
+
+            $declare($table);
+        });
+
+        try {
+            $blueprint->build();
+            self::fail('The dotted name was accepted.');
+        } catch (InvalidIdentifierException $e) {
+            self::assertStringContainsString("[$name]", $e->getMessage());
+        }
+
+        self::assertSame([], $connection->statements);
+        self::assertSame([], $this->repository->executed);
+    }
+
+    /**
+     * @return array<string, array{0: callable, 1: string}>
+     */
+    public static function dottedNames(): array
+    {
+        return [
+            'max partition' => [
+                fn (Blueprint $table) => $table->partitionByRange('created_at')->daily()->withMaxPartition('p.max'),
+                'p.max',
+            ],
+            'column' => [
+                fn (Blueprint $table) => $table->partitionByRange('x.created_at')->daily(),
+                'x.created_at',
+            ],
+        ];
     }
 
     public function test_the_macro_resolves_the_current_container_not_the_first_one(): void
