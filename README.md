@@ -11,6 +11,8 @@ break in production — [timezone drift](docs/timezones.md) in `UNIX_TIMESTAMP` 
 [`REORGANIZE PARTITION pMax` rewriting your whole backlog](docs/commands.md#filling-a-long-gap), and
 [retention and gap filling fighting each other](docs/commands.md#a-table-left-longer-than-its-retention).
 
+![Terminal recording: partitions:add --dry-run lists the nine partitions it would add and the REORGANIZE PARTITION statement; partitions:drop --retain=90 --dry-run lists the nine partitions it would drop, the rows and disk space they hold, and the DROP PARTITION statements. Nothing is executed.](art/partitions.gif)
+
 Describe how a table is sliced in time, and the package takes care of the DDL: partitioning an
 existing table, pre-creating the upcoming partitions, dropping the expired ones, and reporting what
 is currently on disk.
