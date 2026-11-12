@@ -395,13 +395,13 @@ class TimezoneTest extends TestCase
         $this->assertSame([], $repository->executed);
     }
 
-    public function test_the_same_zone_under_another_name_passes_through_the_dst_change(): void
+    public function test_a_session_zone_with_the_same_dst_rules_passes_through_the_clock_change(): void
     {
         date_default_timezone_set('UTC');
         CarbonImmutable::setTestNow('2026-01-15 12:00:00');
 
         $repository = $this->repository(['pMax' => 'MAXVALUE']);
-        $repository->sessionTimezone = 'GB';
+        $repository->sessionTimezone = 'Europe/Lisbon';
 
         $this->builder($repository)->monthly()->timezone('Europe/London')->verifyTimezone()->future(7)->sync();
 
